@@ -1,0 +1,5 @@
+from .interview_repository import interview_repository
+from .problem_repository import problem_repository
+from .score_repository import score_repository
+from .session_repository import session_repository
+from .user_repository import user_repository

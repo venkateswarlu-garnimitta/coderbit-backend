@@ -1,0 +1,17 @@
+fastapi
+python-multipart
+uvicorn[standard]
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<4.1
+python-dotenv
+pydantic[email]
+uuid
+httpx
+websockets
+boto3
+sqlalchemy[asyncio]
+aiosqlite
+alembic
+tzdata
+python-multipart

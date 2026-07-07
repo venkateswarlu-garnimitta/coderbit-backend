@@ -1,0 +1,32 @@
+[
+  {
+    "key": "critical_evaluation",
+    "name": "Critical Evaluation",
+    "rubric": "Did they review and modify AI suggestions, or accept them blindly?\nLow: Accepted every suggestion unchanged without reading or questioning it.\nHigh: Edited, questioned, or rejected suggestions that were wrong or incomplete."
+  },
+  {
+    "key": "debugging_ability",
+    "name": "Debugging Ability",
+    "rubric": "How did they handle errors, failed tests, and terminal output?\nLow: Immediately asked AI to fix every error without reading the message.\nHigh: Read errors carefully, formed a hypothesis, and attempted fixes before asking for help."
+  },
+  {
+    "key": "independent_coding",
+    "name": "Independent Coding",
+    "rubric": "How much of the solution did they write themselves versus paste from AI?\nLow: Nearly the entire solution was copied from AI with little original code.\nHigh: Used AI for guidance and snippets, but wrote and understood most of the code themselves."
+  },
+  {
+    "key": "problem_decomposition",
+    "name": "Problem Decomposition",
+    "rubric": "Did they break the problem into steps before prompting or coding?\nLow: Asked AI to solve the full problem in one shot with no plan.\nHigh: Identified sub-tasks, tackled them in order, and integrated the pieces deliberately."
+  },
+  {
+    "key": "prompt_quality",
+    "name": "Prompt Quality",
+    "rubric": "Were their AI prompts specific, iterative, and well-scoped?\nLow: Vague one-shot prompts with little context or follow-up.\nHigh: Precise, context-rich prompts that were refined based on prior responses."
+  },
+  {
+    "key": "time_management",
+    "name": "Time Management",
+    "rubric": "Did they plan their work, start early, and test incrementally?\nLow: Chaotic approach with no testing until the very end.\nHigh: Structured plan with early milestones and regular testing throughout."
+  }
+]
