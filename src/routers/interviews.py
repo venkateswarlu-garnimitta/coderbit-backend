@@ -14,6 +14,7 @@ from ..database import AsyncSessionLocal
 from .. import config
 from ..dependencies import get_current_user, get_db, require_role
 from ..lib import microvm_manager
+from ..middleware.auth import create_access_token
 from ..lib.artifact_uploader import collect_and_upload_artifacts
 from ..lib.dt import to_utc
 from ..lib.email import send_interview_scheduled_email_task
@@ -274,11 +275,21 @@ async def start_interview(
             detail="Interview cannot be started more than 10 minutes early",
         )
 
+    candidate_jwt_payload = {
+        "sub": interview.candidate_id,
+        "email": interview.candidate.email,
+        "role": "candidate",
+    }
+    if config.GATEWAY_JWT_ISSUER:
+        candidate_jwt_payload["iss"] = config.GATEWAY_JWT_ISSUER
+    candidate_jwt = create_access_token(candidate_jwt_payload)
+
     result = await asyncio.to_thread(
         microvm_manager.start_microvm,
         interview_id,
         interview.candidate.email,
         interview.problem.markdown_content,
+        candidate_jwt,
     )
     logger.info(
         "Started MicroVM for interview %s: candidate_email=%s problem_title=%s "

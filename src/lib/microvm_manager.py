@@ -338,6 +338,7 @@ def start_microvm(
     interview_id: str,
     candidate_email: str,
     problem_markdown: str,
+    candidate_jwt: str,
 ) -> dict:
     """Launch a new MicroVM for an interview and return connection details."""
     if not config.MICROVM_IMAGE_ARN:
@@ -352,16 +353,18 @@ def start_microvm(
             "interview_id": interview_id,
             "candidate_email": candidate_email,
             "problem_markdown": problem_markdown,
+            "candidate_jwt": candidate_jwt,
         }
     )
 
     logger.info(
         "Starting MicroVM for interview %s: candidate_email=%s "
-        "problem_markdown_length=%s payload_length=%s",
+        "problem_markdown_length=%s payload_length=%s candidate_jwt_prefix=%s",
         interview_id,
         candidate_email,
         len(problem_markdown),
         len(payload),
+        candidate_jwt[:8] if candidate_jwt else "",
     )
     run_resp: dict | None = None
     try:
