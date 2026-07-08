@@ -1,11 +1,9 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +16,11 @@ from ..middleware.auth import create_access_token
 from ..lib.artifact_uploader import collect_and_upload_artifacts
 from ..lib.dt import to_utc
 from ..lib.email import send_interview_scheduled_email_task
+from ..lib.s3_recording import (
+    get_raw_log_json,
+    get_recording_download_url,
+    upload_recording,
+)
 from ..lib.session_import import import_session_logs
 from ..models.interview import Interview
 from ..models.user import User
@@ -351,9 +354,9 @@ async def terminate_interview(
     # log to S3 before the MicroVM is terminated. Termination destroys the
     # MicroVM filesystem, so this must complete first. Failures are logged but
     # do not block termination, otherwise an unresponsive MicroVM could leak.
-    artifact_s3_prefix = None
+    artifact_result = None
     if interview.microvm_endpoint:
-        artifact_s3_prefix = await collect_and_upload_artifacts(interview)
+        artifact_result = await collect_and_upload_artifacts(interview)
 
     if interview.microvm_id:
         await asyncio.to_thread(
@@ -379,7 +382,8 @@ async def terminate_interview(
             await import_session_logs(
                 score_db,
                 interview_id,
-                codebase_path=artifact_s3_prefix,
+                codebase_path=artifact_result["prefix"] if artifact_result else None,
+                log_s3_key=artifact_result.get("log_key") if artifact_result else None,
             )
             await run_scoring_background(interview_id)
 
@@ -535,6 +539,31 @@ async def append_interview_log(
     return {"message": "logged"}
 
 
+@router.get("/{interview_id}/raw-log")
+async def get_interview_raw_log(
+    interview_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "interviewer")),
+):
+    """Return the raw candidate session log JSON as stored in S3."""
+    session = await session_repository.get_by_interview(db, interview_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    raw_logs = await asyncio.to_thread(
+        get_raw_log_json, interview_id, session.log_s3_key
+    )
+    if raw_logs is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Raw log JSON not found in S3",
+        )
+
+    return raw_logs
+
+
 @router.post("/admin/enable-run-hook", response_model=dict)
 async def enable_run_hook(
     body: EnableRunHookRequest,
@@ -547,6 +576,8 @@ async def enable_run_hook(
     fixed.
     """
     return microvm_manager.ensure_run_hook_enabled(body.image_arn)
+
+
 @router.post("/{interview_id}/recording")
 async def upload_interview_recording(
     interview_id: str,
@@ -581,12 +612,17 @@ async def upload_interview_recording(
             detail="Recording file is empty",
         )
 
-    config.RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    dest = config.RECORDINGS_DIR / f"{interview_id}.webm"
-    dest.write_bytes(content)
+    try:
+        s3_uri = await asyncio.to_thread(upload_recording, interview_id, content)
+    except Exception:
+        logger.exception("Failed to upload recording for interview %s", interview_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to upload recording to S3",
+        )
 
-    await session_repository.set_recording_path(db, interview_id, str(dest))
-    return {"message": "recording uploaded", "path": str(dest)}
+    await session_repository.set_recording_path(db, interview_id, s3_uri)
+    return {"message": "recording uploaded", "path": s3_uri}
 
 
 @router.get("/{interview_id}/recording")
@@ -601,10 +637,18 @@ async def get_interview_recording(
             status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found"
         )
 
-    path = Path(session.recording_path)
-    if not path.exists():
+    recording_path = session.recording_path
+    if not recording_path.startswith("s3://"):
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Recording file missing"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Recording is not stored in S3",
         )
 
-    return FileResponse(path, media_type="video/webm", filename=path.name)
+    download_url = await asyncio.to_thread(get_recording_download_url, recording_path)
+    if not download_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate recording download URL",
+        )
+
+    return {"url": download_url}

@@ -82,6 +82,7 @@ CODEBASE_DIR = Path(os.getenv("CODEBASE_DIR", str(_REPO_ROOT / "code_bases")))
 # uploaded before an interview session is terminated.
 S3_CANDIDATE_LOGS_BUCKET = os.getenv("S3_CANDIDATE_LOGS_BUCKET", "coderbit")
 S3_CANDIDATE_LOGS_PREFIX = os.getenv("S3_CANDIDATE_LOGS_PREFIX", "candidateLogs")
+
 # Host directory where candidate webcam recordings are stored.
 RECORDINGS_DIR = Path(os.getenv("RECORDINGS_DIR", str(_REPO_ROOT / "recordings")))
 # ── LLM Gateway ──

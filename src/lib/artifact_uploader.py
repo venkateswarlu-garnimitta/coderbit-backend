@@ -23,11 +23,14 @@ _COLLECT_ARTIFACTS_TIMEOUT_SECONDS = 180.0
 _COLLECT_ARTIFACTS_MAX_RETRIES = 3
 
 
-async def collect_and_upload_artifacts(interview: Interview) -> str | None:
+async def collect_and_upload_artifacts(
+    interview: Interview,
+) -> dict[str, str] | None:
     """Ask the candidate MicroVM to upload workspace + log to S3.
 
-    Returns the S3 prefix where artifacts were stored (e.g.
-    ``s3://coderbit/candidateLogs/<interview-id>/``) on success. Returns None
+    Returns a dict with ``prefix`` (the S3 prefix where artifacts were stored,
+    e.g. ``s3://coderbit/candidateLogs/<interview-id>/``) and ``log_key`` (the
+    S3 object key of the raw candidate log JSON) on success. Returns None
     (after logging the failure) if the MicroVM is unreachable, the collection
     endpoint fails, or either upload does not complete. The caller is expected
     to decide whether to proceed with termination after a failure.
@@ -103,12 +106,13 @@ async def collect_and_upload_artifacts(interview: Interview) -> str | None:
                         f"s3://{config.S3_CANDIDATE_LOGS_BUCKET}/"
                         f"{config.S3_CANDIDATE_LOGS_PREFIX}/{interview.id}/"
                     )
+                    log_key = data.get("log_key")
                     logger.info(
                         "Artifacts uploaded for interview %s: %s",
                         interview.id,
                         data,
                     )
-                    return s3_prefix
+                    return {"prefix": s3_prefix, "log_key": log_key}
 
                 logger.error(
                     "Artifact collection failed for interview %s: %s",

@@ -46,11 +46,13 @@ async def import_session_logs(
     db: AsyncSession,
     interview_id: str,
     codebase_path: Path | str | None = None,
+    log_s3_key: str | None = None,
 ) -> dict | None:
     """Read the candidate's workspace session file and store it in interview_sessions.
 
     If ``codebase_path`` is provided, it is persisted alongside the logs so the
-    candidate's archived workspace can be retrieved later.
+    candidate's archived workspace can be retrieved later. If ``log_s3_key`` is
+    provided, it is stored so the raw log JSON can later be streamed from S3.
 
     Returns the imported log payload or None if no file was found.
     """
@@ -84,12 +86,15 @@ async def import_session_logs(
         existing.uploaded_at = datetime.now(timezone.utc)
         if persisted_path:
             existing.codebase_path = persisted_path
+        if log_s3_key:
+            existing.log_s3_key = log_s3_key
     else:
         session = session_repository.model_cls(
             id=str(uuid4()),
             interview_id=interview_id,
             logs=logs,
             codebase_path=persisted_path,
+            log_s3_key=log_s3_key,
             uploaded_at=datetime.now(timezone.utc),
         )
         db.add(session)

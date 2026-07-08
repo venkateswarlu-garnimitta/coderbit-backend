@@ -2,7 +2,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -24,8 +27,17 @@ from .routers import auth, ide_proxy, interviews, llm_gateway, metrics, problems
 from .routers.scoring import run_scoring_background
 
 
+def _run_migrations() -> None:
+    """Apply pending Alembic migrations before handling requests."""
+    alembic_cfg_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+    alembic_cfg = Config(str(alembic_cfg_path))
+    command.upgrade(alembic_cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.to_thread(_run_migrations)
+
     async with AsyncSessionLocal() as db:
         await seed_metrics(db)
         await seed_problems(db)
@@ -52,9 +64,9 @@ async def _expiry_worker():
                     try:
                         # Upload candidate artifacts to S3 before destroying the
                         # environment on session timeout.
-                        artifact_s3_prefix = None
+                        artifact_result = None
                         if interview.microvm_endpoint:
-                            artifact_s3_prefix = await collect_and_upload_artifacts(
+                            artifact_result = await collect_and_upload_artifacts(
                                 interview
                             )
                         if interview.microvm_id:
@@ -65,7 +77,14 @@ async def _expiry_worker():
                             db, interview.id, "completed", ended_at=now
                         )
                         await import_session_logs(
-                            db, interview.id, codebase_path=artifact_s3_prefix
+                            db,
+                            interview.id,
+                            codebase_path=artifact_result["prefix"]
+                            if artifact_result
+                            else None,
+                            log_s3_key=artifact_result.get("log_key")
+                            if artifact_result
+                            else None,
                         )
                         await run_scoring_background(interview.id)
                     except Exception:
@@ -85,7 +104,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 app.include_router(auth.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(problems.router, prefix="/api")

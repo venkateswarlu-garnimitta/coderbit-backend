@@ -22,6 +22,7 @@ class InterviewSession(Base):
     logs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     codebase_path: Mapped[str | None] = mapped_column(String, nullable=True)
     recording_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    log_s3_key: Mapped[str | None] = mapped_column(String, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
