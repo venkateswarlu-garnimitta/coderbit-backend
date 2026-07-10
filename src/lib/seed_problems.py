@@ -138,6 +138,7 @@ async def seed_problems(db: AsyncSession) -> tuple[int, int, int]:
             str(project.get("time_estimate", "1-2 hours"))
         )
         difficulty = str(project.get("difficulty") or _DEFAULT_DIFFICULTY)
+        acceptance_criteria = project.get("acceptance_criteria")
 
         existing = await _get_by_title(db, title)
         if existing is not None:
@@ -146,6 +147,8 @@ async def seed_problems(db: AsyncSession) -> tuple[int, int, int]:
                 updates["markdown_content"] = markdown_content
                 updates["duration_minutes"] = duration_minutes
                 updates["difficulty"] = difficulty
+            if existing.acceptance_criteria != acceptance_criteria:
+                updates["acceptance_criteria"] = acceptance_criteria
             if not existing.metric_ids and metric_ids:
                 updates["metric_ids"] = metric_ids
 
@@ -162,6 +165,7 @@ async def seed_problems(db: AsyncSession) -> tuple[int, int, int]:
             markdown_content=markdown_content,
             duration_minutes=duration_minutes,
             difficulty=difficulty,
+            acceptance_criteria=acceptance_criteria,
             metric_ids=metric_ids,
         )
         created += 1

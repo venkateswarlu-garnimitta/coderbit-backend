@@ -15,3 +15,5 @@ aiosqlite
 alembic
 tzdata
 python-multipart
+strands-agents
+openai

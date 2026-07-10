@@ -17,9 +17,9 @@ logging.basicConfig(
 
 from .database import AsyncSessionLocal
 from .lib import microvm_manager
-from .lib import container_manager
 from .lib.seed_metrics import seed_metrics
 from .lib.seed_problems import seed_problems
+from .lib.seed_users import seed_users
 from .lib.artifact_uploader import collect_and_upload_artifacts
 from .lib.session_import import import_session_logs
 from .repositories.interview_repository import interview_repository
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await seed_metrics(db)
         await seed_problems(db)
+        await seed_users(db)
 
     task = asyncio.create_task(_expiry_worker())
     try:
@@ -82,7 +83,7 @@ async def _expiry_worker():
                             codebase_path=artifact_result["prefix"]
                             if artifact_result
                             else None,
-                            log_s3_key=artifact_result.get("log_key")
+                            logs_path=artifact_result.get("log_key")
                             if artifact_result
                             else None,
                         )

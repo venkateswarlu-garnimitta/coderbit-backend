@@ -35,8 +35,6 @@ class Interview(Base):
     scoring_status: Mapped[str] = mapped_column(
         String, nullable=False, default="not_scored"
     )
-    container_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    container_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     microvm_id: Mapped[str | None] = mapped_column(String, nullable=True)
     microvm_endpoint: Mapped[str | None] = mapped_column(String, nullable=True)
     auth_token: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -64,6 +62,6 @@ class Interview(Base):
     session: Mapped["InterviewSession | None"] = relationship(
         "InterviewSession", back_populates="interview", uselist=False, lazy="selectin"
     )
-    score: Mapped["Score | None"] = relationship(
-        "Score", back_populates="interview", uselist=False, lazy="selectin"
+    scores: Mapped[list["Score"]] = relationship(
+        "Score", back_populates="interview", lazy="selectin"
     )

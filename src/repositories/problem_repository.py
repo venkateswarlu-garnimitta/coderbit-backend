@@ -19,6 +19,7 @@ class ProblemRepository(BaseRepository[Problem]):
         markdown_content: str,
         duration_minutes: int,
         difficulty: str = "Medium",
+        acceptance_criteria: str | None = None,
         metric_ids: list[str] | None = None,
         created_at: datetime | None = None,
     ) -> Problem:
@@ -28,6 +29,7 @@ class ProblemRepository(BaseRepository[Problem]):
             markdown_content=markdown_content,
             duration_minutes=duration_minutes,
             difficulty=difficulty,
+            acceptance_criteria=acceptance_criteria,
             metric_ids=metric_ids or [],
             created_at=created_at or datetime.now(timezone.utc),
         )

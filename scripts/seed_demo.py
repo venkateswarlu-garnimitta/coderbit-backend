@@ -59,6 +59,7 @@ Output: [0,1]
 - -10^9 <= nums[i] <= 10^9
 - -10^9 <= target <= 10^9
 """,
+    "acceptance_criteria": "The solution must return the indices of two numbers that sum to the target. It must handle arrays of varying lengths, avoid using the same element twice, and run in O(n) time using a hash map. Must also handle edge cases where the input contains duplicate values.",
     "duration_minutes": 60,
     "difficulty": "Medium",
 }
@@ -106,6 +107,7 @@ async def _seed_problem(db: AsyncSession) -> Problem:
         markdown_content=DEMO_PROBLEM["markdown_content"],
         duration_minutes=DEMO_PROBLEM["duration_minutes"],
         difficulty=DEMO_PROBLEM["difficulty"],
+        acceptance_criteria=DEMO_PROBLEM.get("acceptance_criteria"),
     )
     print(f"Created problem: {problem.title} ({problem.difficulty}, {problem.duration_minutes} min)")
     return problem

@@ -20,6 +20,7 @@ class Problem(Base):
     markdown_content: Mapped[str] = mapped_column(Text, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     difficulty: Mapped[str] = mapped_column(String, nullable=False, default="Medium")
+    acceptance_criteria: Mapped[str | None] = mapped_column(Text, nullable=True)
     metric_ids: Mapped[list] = mapped_column(
         JSON, nullable=False, default=list
     )

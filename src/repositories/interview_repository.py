@@ -51,7 +51,7 @@ class InterviewRepository(BaseRepository[Interview]):
                 selectinload(Interview.candidate),
                 selectinload(Interview.problem),
                 selectinload(Interview.session),
-                selectinload(Interview.score),
+                selectinload(Interview.scores),
             )
         )
         return result.scalar_one_or_none()
@@ -70,7 +70,7 @@ class InterviewRepository(BaseRepository[Interview]):
             .options(
                 selectinload(Interview.candidate),
                 selectinload(Interview.problem),
-                selectinload(Interview.score),
+                selectinload(Interview.scores),
             )
             .order_by(Interview.created_at.desc())
         )
@@ -92,15 +92,6 @@ class InterviewRepository(BaseRepository[Interview]):
         update_data = {"status": status}
         update_data.update(kwargs)
         return await self.update(db, interview, update_data)
-
-    async def get_active_ports(self, db: "AsyncSession") -> set[int]:
-        result = await db.execute(
-            select(Interview.container_port).where(
-                Interview.status == "active",
-                Interview.container_port.isnot(None),
-            )
-        )
-        return {row[0] for row in result.all()}
 
     async def get_expired_active(
         self, db: "AsyncSession", now: datetime | None = None

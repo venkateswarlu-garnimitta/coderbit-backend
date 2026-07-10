@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -14,11 +14,13 @@ if TYPE_CHECKING:
 
 class Score(Base):
     __tablename__ = "scores"
+    __table_args__ = (UniqueConstraint("interview_id", "score_type"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     interview_id: Mapped[str] = mapped_column(
-        String, ForeignKey("interviews.id"), unique=True, nullable=False
+        String, ForeignKey("interviews.id"), nullable=False
     )
+    score_type: Mapped[str] = mapped_column(String, nullable=False)
     scores: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     overall_score: Mapped[float] = mapped_column(Float, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
@@ -31,5 +33,5 @@ class Score(Base):
     )
 
     interview: Mapped["Interview"] = relationship(
-        "Interview", back_populates="score", lazy="selectin"
+        "Interview", back_populates="scores", lazy="selectin"
     )

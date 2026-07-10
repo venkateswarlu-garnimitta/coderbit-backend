@@ -19,6 +19,8 @@ from ..lib.email import send_interview_scheduled_email_task
 from ..lib.s3_recording import (
     get_raw_log_json,
     get_recording_download_url,
+    recording_s3_key,
+    recording_s3_uri,
     upload_recording,
 )
 from ..lib.session_import import import_session_logs
@@ -35,10 +37,6 @@ router = APIRouter(prefix="/interviews", tags=["interviews"])
 logger = logging.getLogger(__name__)
 
 _ALLOWED_STATUSES = {"scheduled", "active", "completed", "cancelled"}
-
-
-class LogEntryCreate(BaseModel):
-    entry: dict
 
 
 class EnableRunHookRequest(BaseModel):
@@ -61,24 +59,23 @@ def _interviews_overlap(
 
 
 def _format_interview(interview: Interview) -> InterviewRow:
-    # Only expose container/MicroVM details while the interview is active.
-    is_active = interview.status == "active"
     return InterviewRow(
         id=interview.id,
         candidate_id=interview.candidate_id,
-        candidate_email=interview.candidate.email,
+        candidate_email=interview.candidate.email if interview.candidate else "",
         problem_id=interview.problem_id,
-        problem_title=interview.problem.title,
+        problem_title=interview.problem.title if interview.problem else "Deleted Problem",
         scheduled_at=to_utc(interview.scheduled_at).isoformat(),
-        duration_minutes=interview.duration_minutes,
+        duration_minutes=interview.problem.duration_minutes if interview.problem else interview.duration_minutes,
         status=interview.status,
         scoring_status=interview.scoring_status,
-        container_id=interview.container_id if is_active else None,
-        container_port=interview.container_port if is_active else None,
         started_at=to_utc(interview.started_at).isoformat() if interview.started_at else None,
         ended_at=to_utc(interview.ended_at).isoformat() if interview.ended_at else None,
         created_at=to_utc(interview.created_at).isoformat(),
-        overall_score=interview.score.overall_score if interview.score else None,
+        overall_score=next(
+            (s.overall_score for s in interview.scores if s.score_type == "output"),
+            None,
+        ) if interview.scores else None,
     )
 
 
@@ -278,6 +275,12 @@ async def start_interview(
             detail="Interview cannot be started more than 10 minutes early",
         )
 
+    if interview.problem is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Associated problem not found",
+        )
+
     candidate_jwt_payload = {
         "sub": interview.candidate_id,
         "email": interview.candidate.email,
@@ -307,6 +310,7 @@ async def start_interview(
     )
 
     now = datetime.now(timezone.utc)
+    duration = interview.problem.duration_minutes
     interview = await interview_repository.update(
         db,
         interview,
@@ -317,10 +321,11 @@ async def start_interview(
             "auth_token": result["auth_token"],
             "token_expires_at": result["token_expires_at"],
             "started_at": now,
+            "duration_minutes": duration,
         },
     )
 
-    expires_at = now + timedelta(minutes=interview.duration_minutes)
+    expires_at = now + timedelta(minutes=duration)
     return {
         "ide_url": f"/api/interviews/{interview_id}/ide/",
         "microvm_id": result["microvm_id"],
@@ -369,8 +374,6 @@ async def terminate_interview(
         {
             "status": "completed",
             "ended_at": datetime.now(timezone.utc),
-            "container_id": None,
-            "container_port": None,
         },
     )
 
@@ -383,7 +386,7 @@ async def terminate_interview(
                 score_db,
                 interview_id,
                 codebase_path=artifact_result["prefix"] if artifact_result else None,
-                log_s3_key=artifact_result.get("log_key") if artifact_result else None,
+                logs_path=artifact_result.get("log_key") if artifact_result else None,
             )
             await run_scoring_background(interview_id)
 
@@ -490,55 +493,6 @@ async def ide_status(
     }
 
 
-@router.get("/{interview_id}/log")
-async def get_interview_log(
-    interview_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "interviewer")),
-) -> dict:
-    session = await session_repository.get_by_interview(db, interview_id)
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Log not found"
-        )
-
-    logs = session.logs
-    if logs is None:
-        logs = []
-    if isinstance(logs, list):
-        interview = await interview_repository.get_with_session(db, interview_id)
-        return {
-            "sessionId": interview_id,
-            "candidateName": interview.candidate.email if interview and interview.candidate else "",
-            "startedAt": interview.started_at.isoformat() if interview and interview.started_at else datetime.now(timezone.utc).isoformat(),
-            "events": logs,
-        }
-    return logs
-
-
-@router.post("/{interview_id}/log")
-async def append_interview_log(
-    interview_id: str,
-    body: LogEntryCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "candidate")),
-) -> dict:
-    interview = await interview_repository.get(db, interview_id)
-    if interview is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found"
-        )
-
-    if current_user.role == "candidate" and interview.candidate_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
-        )
-
-    session = await session_repository.get_or_create(db, interview_id)
-    await session_repository.append_log(db, session.id, body.entry)
-    return {"message": "logged"}
-
-
 @router.get("/{interview_id}/raw-log")
 async def get_interview_raw_log(
     interview_id: str,
@@ -546,14 +500,11 @@ async def get_interview_raw_log(
     current_user: User = Depends(require_role("admin", "interviewer")),
 ):
     """Return the raw candidate session log JSON as stored in S3."""
-    session = await session_repository.get_by_interview(db, interview_id)
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
-        )
+    session = await session_repository.get_or_fetch_from_s3(db, interview_id)
+    log_key = session.logs_path if session else None
 
     raw_logs = await asyncio.to_thread(
-        get_raw_log_json, interview_id, session.log_s3_key
+        get_raw_log_json, interview_id, log_key
     )
     if raw_logs is None:
         raise HTTPException(
@@ -632,12 +583,29 @@ async def get_interview_recording(
     current_user: User = Depends(require_role("admin", "interviewer")),
 ):
     session = await session_repository.get_by_interview(db, interview_id)
-    if session is None or not session.recording_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found"
-        )
+    recording_path = session.recording_path if session else None
 
-    recording_path = session.recording_path
+    # If no recording_path in DB, try constructing the standard S3 path
+    # and check if the object exists.
+    if not recording_path:
+        bucket = config.S3_CANDIDATE_LOGS_BUCKET
+        key = recording_s3_key(interview_id)
+        try:
+            import boto3
+            from botocore.exceptions import ClientError
+            s3 = boto3.client("s3", region_name=config.AWS_DEFAULT_REGION or None)
+            s3.head_object(Bucket=bucket, Key=key)
+            recording_path = recording_s3_uri(interview_id)
+            # Persist so future calls are faster.
+            if session is None:
+                session = await session_repository.get_or_create(db, interview_id)
+            session.recording_path = recording_path
+            await db.commit()
+        except ClientError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found"
+            )
+
     if not recording_path.startswith("s3://"):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

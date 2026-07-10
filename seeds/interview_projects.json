@@ -7,6 +7,7 @@
       "category": "E-commerce",
       "time_estimate": "1-2 hours",
       "description": "Build a backend for an e-commerce product catalogue. Candidate must design the DB, build CRUD APIs, implement keyword search, category filtering, and cursor-based pagination. No frontend \u2014 pure REST API.",
+      "acceptance_criteria": "The solution must implement a complete REST API for an e-commerce product catalogue. It must support cursor-based pagination (not offset), case-insensitive keyword search across name and description, category filtering with sub-category inclusion, and price stored as integer cents. Soft-deleted products must return 404 and be excluded from listings. The database must have proper foreign keys and indexes on category_id and price.",
       "db_schema": {
         "products": [
           "id SERIAL PRIMARY KEY",
@@ -88,6 +89,7 @@
       "category": "E-commerce",
       "time_estimate": "1-2 hours",
       "description": "Build a shopping cart and checkout flow. Users add/remove items, view their cart with live totals, and place an order. The checkout must deduct stock atomically \u2014 concurrent checkouts for the same product must never oversell.",
+      "acceptance_criteria": "The solution must implement a complete cart and checkout flow with atomic stock deduction. Checkout must use SELECT FOR UPDATE within a DB transaction to prevent overselling. If any product is out of stock, the entire order must roll back with a clear message identifying the failed product. The unit_price in order_items must be the price at time of checkout, not the live price. Cart totals must be calculated on read (not stored). Adding more than available stock to the cart is allowed but checkout must fail.",
       "db_schema": {
         "users": [
           "id",
@@ -184,6 +186,7 @@
       "category": "E-commerce",
       "time_estimate": "1-2 hours",
       "description": "Build a review system for products. Users can post one review per product (with star rating + text), edit or delete their own, and view paginated reviews per product. The product's average rating must always be accurate and fast to read.",
+      "acceptance_criteria": "The solution must enforce one review per user per product via a UNIQUE constraint at the DB level, returning 409 on duplicates. The avg_rating and review_count on the products table must be updated atomically within the same transaction as review insert, update, or delete. Users must only be able to edit or delete their own reviews, returning 403 otherwise. The rating summary endpoint must compute distribution from the reviews table. Cursor-based pagination must work correctly for both newest and highest sort orders.",
       "db_schema": {
         "users": [
           "id",
@@ -267,6 +270,7 @@
       "category": "Social media",
       "time_estimate": "1-2 hours",
       "description": "Build the core of a social platform. Users post content, follow other users, and see a feed of posts from people they follow \u2014 paginated with cursors. Include like counts and a personal likes list.",
+      "acceptance_criteria": "The solution must implement posts, follows, likes, and a feed endpoint. The feed must use cursor-based pagination returning next_cursor as null at the end. like_count must be updated atomically within the same transaction as the likes insert or delete. Self-follow must return 400 with a clear error. The feed must only show posts from followed users (not the current user's own posts). Deleting a post must cascade to delete all its likes.",
       "db_schema": {
         "users": [
           "id",
@@ -364,6 +368,7 @@
       "category": "Social media",
       "time_estimate": "1-2 hours",
       "description": "Build a comment system that supports top-level comments and one level of replies. Users can post, edit, delete their own comments. Deleted comments show placeholder text but keep replies visible. Include pagination and like counts on comments.",
+      "acceptance_criteria": "The solution must support top-level comments and exactly one level of replies, returning 400 when attempting to reply to a reply. Soft-deleted comments must show body and author as '[deleted]' while keeping replies visible. All comments for a post must be fetched in a single query and assembled into a tree in Python to avoid N+1. Pagination must be cursor-based on top-level comments only, with replies always included. like_count must be atomically synchronized with the comment_likes table.",
       "db_schema": {
         "users": [
           "id",
@@ -457,6 +462,7 @@
       "category": "Social media",
       "time_estimate": "1-2 hours",
       "description": "Build a notification system. The app generates notifications for events (new follower, post liked, comment replied). Users can list, read, and bulk-dismiss notifications. Users also control which notification types they want to receive via preferences.",
+      "acceptance_criteria": "The solution must check notification_prefs before inserting a notification, skipping creation if the user has disabled that type. The list endpoint must return unread_count in every response. Pagination must be cursor-based on notification id, newest first. The read-all endpoint must only mark the current user's notifications, not others'. Actor username must be fetched via JOIN in the same query, not a separate N+1 query.",
       "db_schema": {
         "users": [
           "id",
@@ -549,6 +555,7 @@
       "category": "Finance",
       "time_estimate": "1-2 hours",
       "description": "Build a personal finance backend. Users log income and expenses, tag them by category, and query summaries by month, category, or date range. Implement budget limits per category with an alert when spending exceeds the limit.",
+      "acceptance_criteria": "The solution must implement CRUD for transactions with category tagging. Amounts must be stored as positive integer cents with a type field (income/expense) determining direction. All summary calculations must use SQL SUM and GROUP BY, not Python loops. Budget alerts must compute current month spending per category in a single query. All data must be scoped to the current user. Pagination must be cursor-based on transaction id, newest first.",
       "db_schema": {
         "users": [
           "id",
@@ -638,6 +645,7 @@
       "category": "Finance",
       "time_estimate": "1-2 hours",
       "description": "Build a simple banking backend. Users have accounts with balances. They can transfer money between accounts. Every transfer creates a transaction record. Balance must never go negative and concurrent transfers must not cause double-spend.",
+      "acceptance_criteria": "The solution must implement account creation and money transfers with atomic balance updates. Each transfer must use SELECT FOR UPDATE on both accounts within a single DB transaction. Accounts must be locked in consistent order (lower id first) to prevent deadlocks. The system must reject transfers where the source account balance is insufficient, returning 422 with the current balance. Users must only be able to transfer from their own accounts, returning 403 otherwise. Transfer amounts must be validated to be greater than zero before any DB operations.",
       "db_schema": {
         "users": [
           "id",
@@ -722,6 +730,7 @@
       "category": "Finance",
       "time_estimate": "1-2 hours",
       "description": "Build an invoicing backend for freelancers. Users create invoices with line items for clients. Invoices move through statuses (draft -> sent -> paid / overdue). Partial payments are recorded. Overdue invoices are auto-flagged.",
+      "acceptance_criteria": "The solution must implement invoice creation with line items where total is calculated as SUM(quantity * unit_price). Invoice status must transition from draft to sent (only if total > 0), and payments must increment paid_amount until fully settled. Overpayment must be rejected with 422 if the new payment would exceed the remaining balance. Overdue invoices are sent invoices where due_date is past and paid_amount is less than total. All invoice data must be scoped to the owner. balance_due must be computed in the query (total - paid_amount), not stored.",
       "db_schema": {
         "users": [
           "id",
@@ -825,6 +834,7 @@
       "category": "SaaS / Productivity",
       "time_estimate": "1-2 hours",
       "description": "Build a job board backend. Companies post jobs; candidates apply. Companies can view and update application statuses. Candidates can search jobs with filters and track their own applications. Implement pagination throughout.",
+      "acceptance_criteria": "The solution must enforce role-based access: only company users can post jobs, only candidate users can apply. Companies must only manage applications for their own jobs, returning 403 otherwise. The job search must support keyword, type, location, and salary range filters combined dynamically in one query. Duplicate applications must return 409, and applications to non-open jobs must return 400. Application status must follow valid transitions only: applied -> reviewed -> shortlisted -> rejected -> hired.",
       "db_schema": {
         "users": [
           "id",

@@ -23,8 +23,6 @@ class InterviewRow(BaseModel):
     duration_minutes: int
     status: str
     scoring_status: str
-    container_id: str | None
-    container_port: int | None
     started_at: str | None
     ended_at: str | None
     created_at: str

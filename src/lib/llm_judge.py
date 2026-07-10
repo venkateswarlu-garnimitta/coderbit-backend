@@ -13,7 +13,8 @@ from ..config import (
     CODEVECTOR_TEMPERATURE,
     CODEVECTOR_TIMEOUT_SECONDS,
 )
-
+from ..lib.output_eval_agent import MultiEvaluator
+from strands.models.openai import OpenAIModel
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +31,13 @@ def _build_system_prompt(metrics: list[dict]) -> str:
     score_example = ",\n    ".join(
         f'"{m["key"]}": 7.5' for m in metrics
     )
+    
+#     You are an expert technical interviewer evaluating how a candidate used AI coding
+# assistance during a timed coding interview. You will receive the full session log
+# including every prompt they sent to the AI, every LLM response, all terminal
+# commands and outputs, and every code change they accepted or rejected.
 
     return f"""\
-You are an expert technical interviewer evaluating how a candidate used AI coding
-assistance during a timed coding interview. You will receive the full session log
-including every prompt they sent to the AI, every LLM response, all terminal
-commands and outputs, and every code change they accepted or rejected.
-
 Score the candidate 0.0–10.0 on each of these dimensions:
 
 {chr(10).join(metric_lines)}
@@ -100,6 +101,30 @@ def _build_request_body(system_prompt: str, user_message: str) -> dict:
     if CODEVECTOR_MAX_TOKENS is not None and CODEVECTOR_MAX_TOKENS > 0:
         body["max_tokens"] = CODEVECTOR_MAX_TOKENS
     return body
+
+def multi_judge_session(logs, problem_statement: str, files_path: str, output_metrics: list[dict], interact_metrics: list[dict]):
+    
+    output_system_prompt = _build_system_prompt(output_metrics)
+    interact_system_prompt = _build_system_prompt(interact_metrics)
+    claude_sonnet_model_id = "us.anthropic.claude-sonnet-4-6"
+    model_id = "kimi-k2.6"
+    kimi_model = OpenAIModel(
+                        model_id=model_id,  # The specific model identifier used by your gateway
+                        client_args={
+                            "base_url": "https://coding-gateway.fissionlabs.com/gateway/openai/v1",  # Your OpenAI-compatible API base URL
+                            "api_key": "cvg_6N2f1hPGczWLj9S5_LrHjFH_ONjPR7GF29ZYC_YLcpo",   # Pass a dummy string if no key is needed
+                        },
+                        params={
+                                "temperature": 1,
+                                "stream": False
+                        }
+                )
+    mult_eval = MultiEvaluator(logs, files_path, problem_statement, output_system_prompt, interact_system_prompt, kimi_model, kimi_model, kimi_model)
+    mult_eval.eval_output()
+    mult_eval.eval_turns_human_candidate()
+    (output_res, turn_res, final_res) = mult_eval.eval_final()
+    
+    return (output_res, turn_res, final_res)
 
 
 def judge_session(session_json: dict, metrics: list[dict]) -> dict:

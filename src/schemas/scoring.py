@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class ScoreOut(BaseModel):
     id: str
     interview_id: str
+    score_type: str
     scores: dict[str, float]
     overall_score: float
     summary: str

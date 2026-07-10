@@ -44,6 +44,9 @@ async def seed_metrics(db: AsyncSession) -> tuple[int, int, int]:
         key = str(definition.get("key", "")).strip()
         name = str(definition.get("name", "")).strip()
         rubric = str(definition.get("rubric", "")).strip()
+        metric_type = definition.get("metric_type")
+        if metric_type is not None:
+            metric_type = str(metric_type).strip() or None
         if not key or not name or not rubric:
             continue
 
@@ -54,6 +57,7 @@ async def seed_metrics(db: AsyncSession) -> tuple[int, int, int]:
                 key=key,
                 name=name,
                 rubric=rubric,
+                metric_type=metric_type,
                 is_custom=False,
                 created_at=datetime.now(timezone.utc),
             )
@@ -66,6 +70,8 @@ async def seed_metrics(db: AsyncSession) -> tuple[int, int, int]:
             changes["name"] = name
         if existing.rubric != rubric:
             changes["rubric"] = rubric
+        if existing.metric_type != metric_type:
+            changes["metric_type"] = metric_type
         if existing.is_custom:
             changes["is_custom"] = False
 

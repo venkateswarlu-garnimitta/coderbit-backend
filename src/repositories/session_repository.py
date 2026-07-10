@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -6,6 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.session import InterviewSession
 from .base import BaseRepository
+from src.lib.workspace_extractor import extract_workspace_from_s3
+from src.lib.s3_recording import get_raw_log_json
+
+logger = logging.getLogger(__name__)
 
 
 class SessionRepository(BaseRepository[InterviewSession]):
@@ -31,26 +36,32 @@ class SessionRepository(BaseRepository[InterviewSession]):
         session = InterviewSession(
             id=str(uuid4()),
             interview_id=interview_id,
-            logs=[],
             uploaded_at=datetime.now(timezone.utc),
         )
         return await self.create(db, session)
 
-    async def append_log(
-        self,
-        db: AsyncSession,
-        session_id: str,
-        log_entry: dict,
+    async def get_or_fetch_from_s3(
+        self, db: AsyncSession, interview_id: str
     ) -> InterviewSession | None:
-        session = await self.get(db, session_id)
-        if session is None:
+        """Return existing session or create one by probing S3 for log data.
+
+        Uses ``get_raw_log_json`` with no key to search the interview's artifact
+        prefix. Returns ``None`` when neither a DB session nor S3 data exists.
+        """
+        existing = await self.get_by_interview(db, interview_id)
+        if existing is not None:
+            return existing
+
+        raw = get_raw_log_json(interview_id, None)
+        if raw is None:
             return None
-        logs = list(session.logs) if session.logs else []
-        logs.append(log_entry)
-        session.logs = logs
-        session.uploaded_at = datetime.now(timezone.utc)
-        await db.commit()
-        return session
+
+        session = InterviewSession(
+            id=str(uuid4()),
+            interview_id=interview_id,
+            uploaded_at=datetime.now(timezone.utc),
+        )
+        return await self.create(db, session)
 
     async def set_recording_path(
         self,
@@ -64,15 +75,15 @@ class SessionRepository(BaseRepository[InterviewSession]):
         await db.commit()
         return session
 
-    async def get_logs(self, db: AsyncSession, session_id: str) -> list:
-        session = await self.get(db, session_id)
-        if session is None or session.logs is None:
-            return []
-        # Logs may be stored as the full session JSON object (from workspace
-        # import) or as a flat list of events (from append_interview_log).
-        if isinstance(session.logs, dict) and "events" in session.logs:
-            return list(session.logs["events"])
-        return list(session.logs)
+    async def get_S3_logs(self, interview_id: str, log_key: str | None = None) -> list:
+        logs = get_raw_log_json(interview_id, log_key)
+        if isinstance(logs, dict) and "events" in logs:
+            return list(logs["events"])
+        return []
+
+    async def get_files_path(self, interview_id) -> str:
+        folder = extract_workspace_from_s3(interview_id)
+        return folder.as_posix()
 
 
 session_repository = SessionRepository()

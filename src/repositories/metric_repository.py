@@ -24,7 +24,9 @@ class MetricRepository(BaseRepository[Metric]):
         return list(result.scalars().all())
 
     async def list_all(self, db: AsyncSession) -> list[Metric]:
-        result = await db.execute(select(Metric).order_by(Metric.name))
+        result = await db.execute(
+            select(Metric).order_by(Metric.metric_type, Metric.name)
+        )
         return list(result.scalars().all())
 
 

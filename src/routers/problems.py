@@ -27,6 +27,7 @@ def _format_metric(metric: Metric) -> MetricOut:
         name=metric.name,
         rubric=metric.rubric,
         is_custom=metric.is_custom,
+        metric_type=metric.metric_type,
         created_at=metric.created_at.isoformat(),
     )
 
@@ -79,11 +80,13 @@ async def _create_custom_metrics(
                 ),
             )
 
+        metric_type = cm.metric_type if cm.metric_type in ("turn_based", "output") else "turn_based"
         metric = Metric(
             id=str(uuid4()),
             key=key,
             name=name,
             rubric=rubric,
+            metric_type=metric_type,
             is_custom=True,
             created_at=datetime.now(timezone.utc),
         )
@@ -101,6 +104,7 @@ def _format_problem(problem: Problem, metrics: list[Metric] | None = None) -> Pr
         difficulty=problem.difficulty,
         markdown_content=problem.markdown_content,
         duration_minutes=problem.duration_minutes,
+        acceptance_criteria=problem.acceptance_criteria,
         metric_ids=problem.metric_ids or [],
         metrics=[_format_metric(m) for m in metrics or []],
         created_at=problem.created_at.isoformat(),
@@ -114,6 +118,7 @@ def _summarize_problem(problem: Problem) -> ProblemSummary:
         difficulty=problem.difficulty,
         duration_minutes=problem.duration_minutes,
         markdown_content=problem.markdown_content,
+        acceptance_criteria=problem.acceptance_criteria,
         metric_ids=problem.metric_ids or [],
         created_at=problem.created_at.isoformat(),
     )
@@ -137,6 +142,7 @@ async def create_problem(
         markdown_content=body.markdown_content,
         duration_minutes=body.duration_minutes,
         difficulty=body.difficulty,
+        acceptance_criteria=body.acceptance_criteria,
         metric_ids=metric_ids,
     )
 

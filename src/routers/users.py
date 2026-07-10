@@ -27,7 +27,7 @@ async def search_candidates(
     current_user: User = Depends(require_role("admin", "interviewer")),
 ) -> list[dict]:
     query = email.strip().lower()
-    users = await user_repository.search_candidates(db, query=query)
+    users = await user_repository.search_candidates(db, query=query, limit=50 if not query else 10)
     return [{"id": u.id, "email": u.email, "role": u.role} for u in users]
 
 

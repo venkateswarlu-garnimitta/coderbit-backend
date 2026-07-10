@@ -13,9 +13,20 @@ class ScoreRepository(BaseRepository[Score]):
 
     async def get_by_interview(
         self, db: AsyncSession, interview_id: str
-    ) -> Score | None:
+    ) -> list[Score]:
         result = await db.execute(
             select(Score).where(Score.interview_id == interview_id)
+        )
+        return list(result.scalars().all())
+
+    async def get_by_interview_and_type(
+        self, db: AsyncSession, interview_id: str, score_type: str
+    ) -> Score | None:
+        result = await db.execute(
+            select(Score).where(
+                Score.interview_id == interview_id,
+                Score.score_type == score_type,
+            )
         )
         return result.scalar_one_or_none()
 

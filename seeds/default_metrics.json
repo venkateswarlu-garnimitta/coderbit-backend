@@ -2,31 +2,56 @@
   {
     "key": "critical_evaluation",
     "name": "Critical Evaluation",
-    "rubric": "Did they review and modify AI suggestions, or accept them blindly?\nLow: Accepted every suggestion unchanged without reading or questioning it.\nHigh: Edited, questioned, or rejected suggestions that were wrong or incomplete."
+    "rubric": "Did they review and modify AI suggestions, or accept them blindly?\nLow: Accepted every suggestion unchanged without reading or questioning it.\nHigh: Edited, questioned, or rejected suggestions that were wrong or incomplete.",
+    "metric_type": "interaction"
   },
   {
     "key": "debugging_ability",
     "name": "Debugging Ability",
-    "rubric": "How did they handle errors, failed tests, and terminal output?\nLow: Immediately asked AI to fix every error without reading the message.\nHigh: Read errors carefully, formed a hypothesis, and attempted fixes before asking for help."
+    "rubric": "How did they handle errors, failed tests, and terminal output?\nLow: Immediately asked AI to fix every error without reading the message.\nHigh: Read errors carefully, formed a hypothesis, and attempted fixes before asking for help.",
+    "metric_type": "interaction"
   },
   {
     "key": "independent_coding",
     "name": "Independent Coding",
-    "rubric": "How much of the solution did they write themselves versus paste from AI?\nLow: Nearly the entire solution was copied from AI with little original code.\nHigh: Used AI for guidance and snippets, but wrote and understood most of the code themselves."
+    "rubric": "How much of the solution did they write themselves versus paste from AI?\nLow: Nearly the entire solution was copied from AI with little original code.\nHigh: Used AI for guidance and snippets, but wrote and understood most of the code themselves.",
+    "metric_type": "interaction"
   },
   {
     "key": "problem_decomposition",
     "name": "Problem Decomposition",
-    "rubric": "Did they break the problem into steps before prompting or coding?\nLow: Asked AI to solve the full problem in one shot with no plan.\nHigh: Identified sub-tasks, tackled them in order, and integrated the pieces deliberately."
+    "rubric": "Did they break the problem into steps before prompting or coding?\nLow: Asked AI to solve the full problem in one shot with no plan.\nHigh: Identified sub-tasks, tackled them in order, and integrated the pieces deliberately.",
+    "metric_type": "interaction"
   },
   {
     "key": "prompt_quality",
     "name": "Prompt Quality",
-    "rubric": "Were their AI prompts specific, iterative, and well-scoped?\nLow: Vague one-shot prompts with little context or follow-up.\nHigh: Precise, context-rich prompts that were refined based on prior responses."
+    "rubric": "Were their AI prompts specific, iterative, and well-scoped?\nLow: Vague one-shot prompts with little context or follow-up.\nHigh: Precise, context-rich prompts that were refined based on prior responses.",
+    "metric_type": "interaction"
   },
   {
     "key": "time_management",
     "name": "Time Management",
-    "rubric": "Did they plan their work, start early, and test incrementally?\nLow: Chaotic approach with no testing until the very end.\nHigh: Structured plan with early milestones and regular testing throughout."
-  }
+    "rubric": "Did they plan their work, start early, and test incrementally?\nLow: Chaotic approach with no testing until the very end.\nHigh: Structured plan with early milestones and regular testing throughout.",
+    "metric_type": "interaction"
+  },
+  {
+    "key": "output_correctness",
+    "name": "Output Correctness",
+    "rubric": "Passes all the tests; handles edge cases well. Low: Doesn't pass any test cases and doesn't handle any edge cases. High: Passes all the test cases and handles the edge cases well.",
+    "metric_type": "output"
+  },
+  {
+    "key": "architecture_structure",
+    "name": "Architecture & structure",
+    "rubric": "Sensible decomposition, appropriate abstractions for project size (not over- or under-engineered). Low: No logical decomposition and abstractions. High: optimal decomposition and abstractions appropriate for the project size.",
+    "metric_type": "output"
+  },
+  {
+    "key": "error_handling",
+    "name": "Error handling ",
+    "rubric": "Fails predictably, validates inputs, no silent swallowing of errors. Low: fails unpredictably no input validation. High: captures failure scenarios effectively and predictably and validates all the inputs without silent swallowing of errors.",
+    "metric_type": "output"
+  }  
+
 ]

@@ -23,6 +23,7 @@ def _format_metric(metric: Metric) -> MetricOut:
         key=metric.key,
         name=metric.name,
         rubric=metric.rubric,
+        metric_type=metric.metric_type,
         is_custom=metric.is_custom,
         created_at=metric.created_at.isoformat(),
     )
@@ -82,11 +83,13 @@ async def create_metric(
             ),
         )
 
+    metric_type = body.metric_type if body.metric_type in ("turn_based", "output") else "turn_based"
     metric = Metric(
         id=str(uuid4()),
         key=key,
         name=body.name.strip(),
         rubric=body.rubric.strip(),
+        metric_type=metric_type,
         is_custom=True,
         created_at=datetime.now(timezone.utc),
     )
@@ -159,6 +162,9 @@ async def update_metric(
 
     if "rubric" in updates:
         updates["rubric"] = updates["rubric"].strip()
+
+    if "metric_type" in updates and updates["metric_type"] is not None:
+        updates["metric_type"] = updates["metric_type"].strip()
 
     metric = await metric_repository.update(db, metric, updates)
     return _format_metric(metric)
