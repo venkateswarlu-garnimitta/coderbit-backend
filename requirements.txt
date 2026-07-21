@@ -18,5 +18,4 @@ tzdata
 python-multipart
 strands-agents
 openai
-aiosqlite
 cryptography
