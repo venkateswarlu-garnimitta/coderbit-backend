@@ -27,10 +27,7 @@ def _log_key_status() -> None:
 def _handle_upstream_error(exc: httpx.HTTPStatusError) -> None:
     """Log upstream error details and raise a FastAPI HTTPException."""
     status = exc.response.status_code
-    try:
-        body = exc.response.text
-    except (httpx.ResponseNotRead, AttributeError):
-        body = "<response body not available>"
+    body = exc.response.text
     logger.error(
         "CodeVector returned %s for %s. Response: %s",
         status,
@@ -76,7 +73,6 @@ async def chat_completions_stream(request_body: bytes):
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                await response.aread()
                 _handle_upstream_error(exc)
             async for chunk in response.aiter_text():
                 yield chunk
