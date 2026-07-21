@@ -22,9 +22,8 @@ class MetricOut(BaseModel):
     key: str
     name: str
     rubric: str
-    metric_type: str
-    is_custom: bool
     metric_type: str | None
+    is_custom: bool
     created_at: str
 
 

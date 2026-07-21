@@ -15,7 +15,7 @@ from ..models.session import InterviewSession
 from ..repositories.metric_repository import metric_repository
 from ..repositories.problem_repository import problem_repository
 from ..schemas.metrics import MetricOut
-from ..schemas.problems import ProblemCreate, ProblemDetail, ProblemSummary, ProblemUpdate
+from ..schemas.problems import ProblemCreate, ProblemDetail, ProblemSummary, ProblemUpdate, ALLOWED_SERVICES
 
 router = APIRouter(prefix="/problems", tags=["problems"])
 
@@ -80,7 +80,7 @@ async def _create_custom_metrics(
                 ),
             )
 
-        metric_type = cm.metric_type if cm.metric_type in ("turn_based", "output") else "turn_based"
+        metric_type = cm.metric_type if cm.metric_type in ("interaction", "output") else "interaction"
         metric = Metric(
             id=str(uuid4()),
             key=key,
@@ -107,6 +107,8 @@ def _format_problem(problem: Problem, metrics: list[Metric] | None = None) -> Pr
         acceptance_criteria=problem.acceptance_criteria,
         metric_ids=problem.metric_ids or [],
         metrics=[_format_metric(m) for m in metrics or []],
+        required_services=problem.required_services or [],
+        allow_assistant=problem.allow_assistant,
         created_at=problem.created_at.isoformat(),
     )
 
@@ -120,6 +122,8 @@ def _summarize_problem(problem: Problem) -> ProblemSummary:
         markdown_content=problem.markdown_content,
         acceptance_criteria=problem.acceptance_criteria,
         metric_ids=problem.metric_ids or [],
+        required_services=problem.required_services or [],
+        allow_assistant=problem.allow_assistant,
         created_at=problem.created_at.isoformat(),
     )
 
@@ -130,6 +134,13 @@ async def create_problem(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role("admin")),
 ) -> ProblemDetail:
+    invalid = [s for s in body.required_services if s not in ALLOWED_SERVICES]
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown service(s): {invalid}. Allowed: {sorted(ALLOWED_SERVICES)}",
+        )
+
     custom_metrics = await _create_custom_metrics(db, body.custom_metrics)
     metric_ids = list(body.metric_ids)
     for metric in custom_metrics:
@@ -144,6 +155,8 @@ async def create_problem(
         difficulty=body.difficulty,
         acceptance_criteria=body.acceptance_criteria,
         metric_ids=metric_ids,
+        required_services=body.required_services,
+        allow_assistant=body.allow_assistant,
     )
 
     metrics = await _resolve_metrics(db, metric_ids)
@@ -196,6 +209,14 @@ async def update_problem(
         for metric in custom_metrics:
             current_metric_ids.add(metric.id)
         updates["metric_ids"] = list(current_metric_ids)
+
+    if "required_services" in updates:
+        invalid = [s for s in updates["required_services"] if s not in ALLOWED_SERVICES]
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown service(s): {invalid}. Allowed: {sorted(ALLOWED_SERVICES)}",
+            )
 
     if updates:
         problem = await problem_repository.update(db, problem, updates)

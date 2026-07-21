@@ -21,6 +21,8 @@ class ProblemRepository(BaseRepository[Problem]):
         difficulty: str = "Medium",
         acceptance_criteria: str | None = None,
         metric_ids: list[str] | None = None,
+        required_services: list[str] | None = None,
+        allow_assistant: bool = True,
         created_at: datetime | None = None,
     ) -> Problem:
         problem = Problem(
@@ -31,6 +33,8 @@ class ProblemRepository(BaseRepository[Problem]):
             difficulty=difficulty,
             acceptance_criteria=acceptance_criteria,
             metric_ids=metric_ids or [],
+            required_services=required_services or [],
+            allow_assistant=allow_assistant,
             created_at=created_at or datetime.now(timezone.utc),
         )
         return await self.create(db, problem)

@@ -1,12 +1,12 @@
 {
-  "title": "Backend Mini Projects \u2014 Interview Problems",
+  "title": "Backend Mini Projects — Interview Problems",
   "projects": [
     {
       "id": 1,
       "title": "Product Catalogue with Pagination & Search",
       "category": "E-commerce",
       "time_estimate": "1-2 hours",
-      "description": "Build a backend for an e-commerce product catalogue. Candidate must design the DB, build CRUD APIs, implement keyword search, category filtering, and cursor-based pagination. No frontend \u2014 pure REST API.",
+      "description": "Build a backend for an e-commerce product catalogue. Candidate must design the DB, build CRUD APIs, implement keyword search, category filtering, and cursor-based pagination. No frontend — pure REST API.",
       "acceptance_criteria": "The solution must implement a complete REST API for an e-commerce product catalogue. It must support cursor-based pagination (not offset), case-insensitive keyword search across name and description, category filtering with sub-category inclusion, and price stored as integer cents. Soft-deleted products must return 404 and be excluded from listings. The database must have proper foreign keys and indexes on category_id and price.",
       "db_schema": {
         "products": [
@@ -28,7 +28,7 @@
         {
           "method": "GET",
           "path": "/products",
-          "description": "List products \u2014 keyword search, category filter, price range, cursor pagination (20/page)"
+          "description": "List products — keyword search, category filter, price range, cursor pagination (20/page)"
         },
         {
           "method": "GET",
@@ -38,7 +38,7 @@
         {
           "method": "POST",
           "path": "/products",
-          "description": "Create product \u2014 validate price > 0, stock >= 0"
+          "description": "Create product — validate price > 0, stock >= 0"
         },
         {
           "method": "PATCH",
@@ -48,7 +48,7 @@
         {
           "method": "DELETE",
           "path": "/products/:id",
-          "description": "Soft delete \u2014 set deleted_at, exclude from listings"
+          "description": "Soft delete — set deleted_at, exclude from listings"
         },
         {
           "method": "GET",
@@ -57,10 +57,10 @@
         }
       ],
       "constraints": [
-        "Cursor pagination: use id-based cursor, not offset \u2014 explain why in code comments",
+        "Cursor pagination: use id-based cursor, not offset — explain why in code comments",
         "Search: case-insensitive match on name + description using ILIKE or tsvector",
         "Category filter must include all sub-categories (recursive)",
-        "Price stored as INTEGER cents \u2014 never float",
+        "Price stored as INTEGER cents — never float",
         "Deleted products return 404, not included in list results"
       ],
       "evaluation_criteria": [
@@ -81,14 +81,19 @@
           "detail": "Empty results, invalid cursor, out-of-stock filter"
         }
       ],
-      "interviewer_hint": "Watch for offset pagination \u2014 it breaks with new inserts. Candidate should use WHERE id < :cursor ORDER BY id DESC. Check if they index (category_id, price) and handle recursive category lookup."
+      "interviewer_hint": "Watch for offset pagination — it breaks with new inserts. Candidate should use WHERE id < :cursor ORDER BY id DESC. Check if they index (category_id, price) and handle recursive category lookup.",
+      "required_services": [
+        "postgres",
+        "redis"
+      ],
+      "allow_assistant": true
     },
     {
       "id": 2,
       "title": "User Cart & Checkout System",
       "category": "E-commerce",
       "time_estimate": "1-2 hours",
-      "description": "Build a shopping cart and checkout flow. Users add/remove items, view their cart with live totals, and place an order. The checkout must deduct stock atomically \u2014 concurrent checkouts for the same product must never oversell.",
+      "description": "Build a shopping cart and checkout flow. Users add/remove items, view their cart with live totals, and place an order. The checkout must deduct stock atomically — concurrent checkouts for the same product must never oversell.",
       "acceptance_criteria": "The solution must implement a complete cart and checkout flow with atomic stock deduction. Checkout must use SELECT FOR UPDATE within a DB transaction to prevent overselling. If any product is out of stock, the entire order must roll back with a clear message identifying the failed product. The unit_price in order_items must be the price at time of checkout, not the live price. Cart totals must be calculated on read (not stored). Adding more than available stock to the cart is allowed but checkout must fail.",
       "db_schema": {
         "users": [
@@ -130,12 +135,12 @@
         {
           "method": "POST",
           "path": "/cart/items",
-          "description": "Add item to cart \u2014 if exists, increment quantity"
+          "description": "Add item to cart — if exists, increment quantity"
         },
         {
           "method": "PATCH",
           "path": "/cart/items/:product_id",
-          "description": "Update quantity \u2014 quantity=0 removes item"
+          "description": "Update quantity — quantity=0 removes item"
         },
         {
           "method": "GET",
@@ -150,15 +155,15 @@
         {
           "method": "POST",
           "path": "/checkout",
-          "description": "Place order \u2014 deduct stock atomically, clear cart, return order_id"
+          "description": "Place order — deduct stock atomically, clear cart, return order_id"
         }
       ],
       "constraints": [
         "Checkout must use a DB transaction with SELECT FOR UPDATE on products",
         "If any product is out of stock, roll back entire order and return which product failed",
         "unit_price in order_items = product price at time of checkout (not live price)",
-        "Cart total must reflect current prices \u2014 calculate on read, not stored",
-        "Adding more than available stock to cart is allowed \u2014 but checkout will fail"
+        "Cart total must reflect current prices — calculate on read, not stored",
+        "Adding more than available stock to cart is allowed — but checkout will fail"
       ],
       "evaluation_criteria": [
         {
@@ -178,7 +183,11 @@
           "detail": "Clear message on stock failure with product name"
         }
       ],
-      "interviewer_hint": "Key test: run two concurrent POST /checkout requests for the same item with stock=1 \u2014 only one should succeed. If candidate uses SELECT without FOR UPDATE, both will succeed (oversell). Check if they lock rows in consistent order to avoid deadlock."
+      "interviewer_hint": "Key test: run two concurrent POST /checkout requests for the same item with stock=1 — only one should succeed. If candidate uses SELECT without FOR UPDATE, both will succeed (oversell). Check if they lock rows in consistent order to avoid deadlock.",
+      "required_services": [
+        "postgres"
+      ],
+      "allow_assistant": false
     },
     {
       "id": 3,
@@ -214,17 +223,17 @@
         {
           "method": "POST",
           "path": "/products/:id/reviews",
-          "description": "Submit review \u2014 one per user per product, rating 1-5 required"
+          "description": "Submit review — one per user per product, rating 1-5 required"
         },
         {
           "method": "PATCH",
           "path": "/reviews/:id",
-          "description": "Edit own review \u2014 only body and rating, updates updated_at"
+          "description": "Edit own review — only body and rating, updates updated_at"
         },
         {
           "method": "DELETE",
           "path": "/reviews/:id",
-          "description": "Delete own review \u2014 recalculate product avg_rating"
+          "description": "Delete own review — recalculate product avg_rating"
         },
         {
           "method": "GET",
@@ -238,10 +247,10 @@
         }
       ],
       "constraints": [
-        "One review per user per product \u2014 return 409 if duplicate",
+        "One review per user per product — return 409 if duplicate",
         "avg_rating on products table must update on every insert, update, delete",
-        "User can only edit/delete their own review \u2014 return 403 otherwise",
-        "Rating summary must be computed from reviews table \u2014 not cached separately",
+        "User can only edit/delete their own review — return 403 otherwise",
+        "Rating summary must be computed from reviews table — not cached separately",
         "Pagination: cursor-based on review id, support sort=newest and sort=highest"
       ],
       "evaluation_criteria": [
@@ -262,14 +271,16 @@
           "detail": "Cursor works with both sort orders"
         }
       ],
-      "interviewer_hint": "avg_rating update: use UPDATE products SET avg_rating = (SELECT AVG(rating) FROM reviews WHERE product_id=:id), review_count = (SELECT COUNT(*) ...) inside the same transaction as the review change. Watch for candidates who only update on insert but forget delete."
+      "interviewer_hint": "avg_rating update: use UPDATE products SET avg_rating = (SELECT AVG(rating) FROM reviews WHERE product_id=:id), review_count = (SELECT COUNT(*) ...) inside the same transaction as the review change. Watch for candidates who only update on insert but forget delete.",
+      "required_services": [],
+      "allow_assistant": true
     },
     {
       "id": 4,
       "title": "Social Media Post & Follow Feed",
       "category": "Social media",
       "time_estimate": "1-2 hours",
-      "description": "Build the core of a social platform. Users post content, follow other users, and see a feed of posts from people they follow \u2014 paginated with cursors. Include like counts and a personal likes list.",
+      "description": "Build the core of a social platform. Users post content, follow other users, and see a feed of posts from people they follow — paginated with cursors. Include like counts and a personal likes list.",
       "acceptance_criteria": "The solution must implement posts, follows, likes, and a feed endpoint. The feed must use cursor-based pagination returning next_cursor as null at the end. like_count must be updated atomically within the same transaction as the likes insert or delete. Self-follow must return 400 with a clear error. The feed must only show posts from followed users (not the current user's own posts). Deleting a post must cascade to delete all its likes.",
       "db_schema": {
         "users": [
@@ -302,7 +313,7 @@
         {
           "method": "POST",
           "path": "/posts",
-          "description": "Create post \u2014 content max 280 chars"
+          "description": "Create post — content max 280 chars"
         },
         {
           "method": "DELETE",
@@ -312,7 +323,7 @@
         {
           "method": "POST",
           "path": "/users/:id/follow",
-          "description": "Follow user \u2014 409 if already following, 400 if self-follow"
+          "description": "Follow user — 409 if already following, 400 if self-follow"
         },
         {
           "method": "DELETE",
@@ -322,24 +333,24 @@
         {
           "method": "GET",
           "path": "/feed",
-          "description": "Posts from followed users \u2014 cursor paginated, newest first, include author username + like_count"
+          "description": "Posts from followed users — cursor paginated, newest first, include author username + like_count"
         },
         {
           "method": "POST",
           "path": "/posts/:id/like",
-          "description": "Like post \u2014 409 if already liked, increment like_count"
+          "description": "Like post — 409 if already liked, increment like_count"
         },
         {
           "method": "DELETE",
           "path": "/posts/:id/like",
-          "description": "Unlike post \u2014 decrement like_count, floor at 0"
+          "description": "Unlike post — decrement like_count, floor at 0"
         }
       ],
       "constraints": [
-        "Feed must use cursor pagination \u2014 return next_cursor: null at end",
-        "like_count on posts must stay in sync \u2014 update atomically with likes insert/delete",
+        "Feed must use cursor pagination — return next_cursor: null at end",
+        "like_count on posts must stay in sync — update atomically with likes insert/delete",
         "Self-follow must return 400 with clear error message",
-        "Feed should only show posts from users the current user follows \u2014 not own posts",
+        "Feed should only show posts from users the current user follows — not own posts",
         "Deleting a post must also delete all its likes (CASCADE or explicit delete)"
       ],
       "evaluation_criteria": [
@@ -360,7 +371,12 @@
           "detail": "Self-follow, already-liked, empty feed"
         }
       ],
-      "interviewer_hint": "Feed query: SELECT posts.* FROM posts JOIN follows ON posts.user_id = follows.following_id WHERE follows.follower_id = :me AND posts.id < :cursor ORDER BY posts.id DESC LIMIT 20. Check if candidate uses a subquery or JOIN \u2014 both fine, watch for N+1 on author name."
+      "interviewer_hint": "Feed query: SELECT posts.* FROM posts JOIN follows ON posts.user_id = follows.following_id WHERE follows.follower_id = :me AND posts.id < :cursor ORDER BY posts.id DESC LIMIT 20. Check if candidate uses a subquery or JOIN — both fine, watch for N+1 on author name.",
+      "required_services": [
+        "postgres",
+        "redis"
+      ],
+      "allow_assistant": true
     },
     {
       "id": 5,
@@ -411,12 +427,12 @@
         {
           "method": "PATCH",
           "path": "/comments/:id",
-          "description": "Edit own comment body \u2014 update updated_at"
+          "description": "Edit own comment body — update updated_at"
         },
         {
           "method": "DELETE",
           "path": "/comments/:id",
-          "description": "Soft delete \u2014 set deleted_at, body becomes '[deleted]'"
+          "description": "Soft delete — set deleted_at, body becomes '[deleted]'"
         },
         {
           "method": "GET",
@@ -426,15 +442,15 @@
         {
           "method": "POST",
           "path": "/comments/:id/like",
-          "description": "Like comment \u2014 409 if duplicate"
+          "description": "Like comment — 409 if duplicate"
         }
       ],
       "constraints": [
-        "Replies can only be one level deep \u2014 replying to a reply returns 400",
+        "Replies can only be one level deep — replying to a reply returns 400",
         "Soft-deleted comments: return body as '[deleted]', keep author as '[deleted]', keep replies visible",
-        "Fetch all comments for a post in one query \u2014 no N+1 (assemble tree in Python)",
-        "Pagination on top-level comments only \u2014 cursor-based on comment id",
-        "like_count must stay in sync with comment_likes \u2014 update in same transaction"
+        "Fetch all comments for a post in one query — no N+1 (assemble tree in Python)",
+        "Pagination on top-level comments only — cursor-based on comment id",
+        "like_count must stay in sync with comment_likes — update in same transaction"
       ],
       "evaluation_criteria": [
         {
@@ -454,7 +470,11 @@
           "detail": "Cursor on top-level only, replies always included"
         }
       ],
-      "interviewer_hint": "Fetch all comments WHERE post_id=:id in one query. In Python, build a dict keyed by id, then group children under parents. This is faster than recursive SQL for shallow trees. Watch for candidates who do a separate query per comment \u2014 that's N+1."
+      "interviewer_hint": "Fetch all comments WHERE post_id=:id in one query. In Python, build a dict keyed by id, then group children under parents. This is faster than recursive SQL for shallow trees. Watch for candidates who do a separate query per comment — that's N+1.",
+      "required_services": [
+        "mongodb"
+      ],
+      "allow_assistant": false
     },
     {
       "id": 6,
@@ -489,7 +509,7 @@
         {
           "method": "GET",
           "path": "/notifications",
-          "description": "List notifications \u2014 cursor paginated, unread_only=true filter, include actor username"
+          "description": "List notifications — cursor paginated, unread_only=true filter, include actor username"
         },
         {
           "method": "PATCH",
@@ -514,20 +534,20 @@
         {
           "method": "PUT",
           "path": "/notification-prefs",
-          "description": "Update preferences \u2014 body: { type, enabled }"
+          "description": "Update preferences — body: { type, enabled }"
         },
         {
           "method": "POST",
           "path": "/internal/notify",
-          "description": "Internal endpoint: create notification \u2014 check prefs before inserting"
+          "description": "Internal endpoint: create notification — check prefs before inserting"
         }
       ],
       "constraints": [
-        "Before inserting a notification, check notification_prefs \u2014 skip if enabled=false",
+        "Before inserting a notification, check notification_prefs — skip if enabled=false",
         "GET /notifications must return unread_count in every response",
         "Pagination: cursor on notification id, newest first",
-        "read-all must only mark current user's notifications \u2014 never others'",
-        "Actor username must be included in list response \u2014 use JOIN, not separate query"
+        "read-all must only mark current user's notifications — never others'",
+        "Actor username must be included in list response — use JOIN, not separate query"
       ],
       "evaluation_criteria": [
         {
@@ -547,7 +567,11 @@
           "detail": "Actor username fetched in same query, no N+1"
         }
       ],
-      "interviewer_hint": "For read-all: UPDATE notifications SET read_at = now() WHERE user_id = :me AND read_at IS NULL \u2014 make sure candidate scopes to user_id. Watch for candidates who skip the prefs check in /internal/notify \u2014 that's the core logic of the feature."
+      "interviewer_hint": "For read-all: UPDATE notifications SET read_at = now() WHERE user_id = :me AND read_at IS NULL — make sure candidate scopes to user_id. Watch for candidates who skip the prefs check in /internal/notify — that's the core logic of the feature.",
+      "required_services": [
+        "redis"
+      ],
+      "allow_assistant": true
     },
     {
       "id": 7,
@@ -584,12 +608,12 @@
         {
           "method": "POST",
           "path": "/transactions",
-          "description": "Log a transaction \u2014 type, amount, category, date"
+          "description": "Log a transaction — type, amount, category, date"
         },
         {
           "method": "GET",
           "path": "/transactions",
-          "description": "List with filters: type, category_id, date range \u2014 cursor paginated"
+          "description": "List with filters: type, category_id, date range — cursor paginated"
         },
         {
           "method": "DELETE",
@@ -599,7 +623,7 @@
         {
           "method": "GET",
           "path": "/summary",
-          "description": "Total income, total expenses, net \u2014 for a given month or date range"
+          "description": "Total income, total expenses, net — for a given month or date range"
         },
         {
           "method": "GET",
@@ -613,10 +637,10 @@
         }
       ],
       "constraints": [
-        "Amount always stored as positive INTEGER cents \u2014 type field determines direction",
-        "Summary calculations done in SQL (SUM + GROUP BY) \u2014 not in Python loops",
+        "Amount always stored as positive INTEGER cents — type field determines direction",
+        "Summary calculations done in SQL (SUM + GROUP BY) — not in Python loops",
         "Budget alert: calculate current month spend per category in one query",
-        "All data is per-user \u2014 never return another user's transactions",
+        "All data is per-user — never return another user's transactions",
         "Pagination: cursor on transaction id, newest first"
       ],
       "evaluation_criteria": [
@@ -637,7 +661,9 @@
           "detail": "Integer cents, no float"
         }
       ],
-      "interviewer_hint": "Budget alert query: SELECT category_id, SUM(amount) as spent, budget_limit FROM transactions JOIN categories USING(category_id) WHERE type='expense' AND date_trunc('month', date) = date_trunc('month', now()) GROUP BY category_id, budget_limit HAVING SUM(amount) >= budget_limit * 0.8."
+      "interviewer_hint": "Budget alert query: SELECT category_id, SUM(amount) as spent, budget_limit FROM transactions JOIN categories USING(category_id) WHERE type='expense' AND date_trunc('month', date) = date_trunc('month', now()) GROUP BY category_id, budget_limit HAVING SUM(amount) >= budget_limit * 0.8.",
+      "required_services": [],
+      "allow_assistant": false
     },
     {
       "id": 8,
@@ -684,25 +710,25 @@
         {
           "method": "GET",
           "path": "/accounts/:id/transactions",
-          "description": "Paginated transfer history for account \u2014 cursor based"
+          "description": "Paginated transfer history for account — cursor based"
         },
         {
           "method": "POST",
           "path": "/transfers",
-          "description": "Transfer between accounts \u2014 atomic, balance check, lock rows"
+          "description": "Transfer between accounts — atomic, balance check, lock rows"
         },
         {
           "method": "GET",
           "path": "/transfers/:id",
-          "description": "Transfer detail \u2014 from/to account names, amount, status"
+          "description": "Transfer detail — from/to account names, amount, status"
         }
       ],
       "constraints": [
         "Transfer must use a DB transaction with SELECT FOR UPDATE on both accounts",
         "Lock accounts in consistent order (lower id first) to prevent deadlock",
-        "Reject transfer if from_account balance < amount \u2014 return 422 with current balance",
-        "User can only transfer from accounts they own \u2014 403 otherwise",
-        "Amount must be > 0 \u2014 validate before DB operations"
+        "Reject transfer if from_account balance < amount — return 422 with current balance",
+        "User can only transfer from accounts they own — 403 otherwise",
+        "Amount must be > 0 — validate before DB operations"
       ],
       "evaluation_criteria": [
         {
@@ -722,7 +748,11 @@
           "detail": "SELECT FOR UPDATE prevents double-spend"
         }
       ],
-      "interviewer_hint": "Lock order matters: always SELECT FOR UPDATE WHERE id IN (:a, :b) ORDER BY id \u2014 this prevents deadlock when two transfers happen simultaneously in opposite directions. Test with concurrent requests: two transfers of full balance should result in exactly one succeeding."
+      "interviewer_hint": "Lock order matters: always SELECT FOR UPDATE WHERE id IN (:a, :b) ORDER BY id — this prevents deadlock when two transfers happen simultaneously in opposite directions. Test with concurrent requests: two transfers of full balance should result in exactly one succeeding.",
+      "required_services": [
+        "postgres"
+      ],
+      "allow_assistant": false
     },
     {
       "id": 9,
@@ -773,7 +803,7 @@
         {
           "method": "POST",
           "path": "/invoices",
-          "description": "Create invoice with line items \u2014 auto-calculate total"
+          "description": "Create invoice with line items — auto-calculate total"
         },
         {
           "method": "PATCH",
@@ -783,12 +813,12 @@
         {
           "method": "POST",
           "path": "/invoices/:id/payments",
-          "description": "Record payment \u2014 add to paid_amount, mark paid if fully settled"
+          "description": "Record payment — add to paid_amount, mark paid if fully settled"
         },
         {
           "method": "GET",
           "path": "/invoices",
-          "description": "List with filters: status, client_id, overdue=true \u2014 cursor paginated"
+          "description": "List with filters: status, client_id, overdue=true — cursor paginated"
         },
         {
           "method": "GET",
@@ -798,15 +828,15 @@
         {
           "method": "GET",
           "path": "/summary",
-          "description": "Total invoiced, total paid, total outstanding \u2014 for current user"
+          "description": "Total invoiced, total paid, total outstanding — for current user"
         }
       ],
       "constraints": [
-        "total = SUM(quantity * unit_price) across invoice_items \u2014 recalculate on any item change",
+        "total = SUM(quantity * unit_price) across invoice_items — recalculate on any item change",
         "Status overdue: any sent invoice where due_date < today and paid_amount < total",
-        "Overpayment not allowed \u2014 reject payment if paid_amount + new_payment > total",
-        "Only invoice owner can view, edit, or record payments \u2014 403 otherwise",
-        "balance_due = total - paid_amount \u2014 computed in query, not stored"
+        "Overpayment not allowed — reject payment if paid_amount + new_payment > total",
+        "Only invoice owner can view, edit, or record payments — 403 otherwise",
+        "balance_due = total - paid_amount — computed in query, not stored"
       ],
       "evaluation_criteria": [
         {
@@ -826,7 +856,12 @@
           "detail": "All endpoints scoped to user_id"
         }
       ],
-      "interviewer_hint": "Overdue filter in SQL: WHERE status = 'sent' AND due_date < CURRENT_DATE AND paid_amount < total. For the summary endpoint watch for candidates who do 3 separate queries \u2014 it should be one query: SELECT SUM(total), SUM(paid_amount), SUM(total - paid_amount) FROM invoices WHERE user_id = :me."
+      "interviewer_hint": "Overdue filter in SQL: WHERE status = 'sent' AND due_date < CURRENT_DATE AND paid_amount < total. For the summary endpoint watch for candidates who do 3 separate queries — it should be one query: SELECT SUM(total), SUM(paid_amount), SUM(total - paid_amount) FROM invoices WHERE user_id = :me.",
+      "required_services": [
+        "postgres",
+        "mongodb"
+      ],
+      "allow_assistant": true
     },
     {
       "id": 10,
@@ -876,22 +911,22 @@
         {
           "method": "POST",
           "path": "/jobs",
-          "description": "Company posts a job \u2014 role must be 'company'"
+          "description": "Company posts a job — role must be 'company'"
         },
         {
           "method": "GET",
           "path": "/jobs",
-          "description": "Search jobs: keyword, type, location, salary range \u2014 cursor paginated"
+          "description": "Search jobs: keyword, type, location, salary range — cursor paginated"
         },
         {
           "method": "POST",
           "path": "/jobs/:id/apply",
-          "description": "Candidate applies \u2014 409 if already applied, 400 if job not open"
+          "description": "Candidate applies — 409 if already applied, 400 if job not open"
         },
         {
           "method": "GET",
           "path": "/jobs/:id/applications",
-          "description": "Company views applicants for their job \u2014 cursor paginated with status filter"
+          "description": "Company views applicants for their job — cursor paginated with status filter"
         },
         {
           "method": "PATCH",
@@ -905,11 +940,11 @@
         }
       ],
       "constraints": [
-        "Only users with role=company can POST /jobs \u2014 return 403 otherwise",
-        "Only users with role=candidate can POST /apply \u2014 return 403 otherwise",
-        "Company can only manage applications for their own jobs \u2014 403 otherwise",
-        "Keyword search on job title + description \u2014 case-insensitive",
-        "Closed jobs (status != open) cannot receive new applications \u2014 return 400"
+        "Only users with role=company can POST /jobs — return 403 otherwise",
+        "Only users with role=candidate can POST /apply — return 403 otherwise",
+        "Company can only manage applications for their own jobs — 403 otherwise",
+        "Keyword search on job title + description — case-insensitive",
+        "Closed jobs (status != open) cannot receive new applications — return 400"
       ],
       "evaluation_criteria": [
         {
@@ -929,7 +964,9 @@
           "detail": "Keyword + filters combined correctly in one query"
         }
       ],
-      "interviewer_hint": "For job search with multiple optional filters, build the WHERE clause dynamically \u2014 don't write separate queries per filter combination. Watch for candidates who check role in Python but not in the DB query \u2014 both are fine, but the DB should scope data too."
+      "interviewer_hint": "For job search with multiple optional filters, build the WHERE clause dynamically — don't write separate queries per filter combination. Watch for candidates who check role in Python but not in the DB query — both are fine, but the DB should scope data too.",
+      "required_services": [],
+      "allow_assistant": true
     }
   ]
 }

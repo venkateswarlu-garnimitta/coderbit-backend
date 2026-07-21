@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +22,16 @@ from .. import config
 logger = logging.getLogger(__name__)
 
 TARGET_PORT = 8080
+HOOK_SERVER_PORT = 9000
 _TOKEN_LEAD_TIME_MINUTES = 5
+# Total lifetime of the AWS MicroVM auth token (minutes). The workbench
+# WebSocket carries this token in its connect subprotocol for the ENTIRE
+# session and the proxy cannot refresh it mid-connection. AWS currently caps
+# the API parameter at 60 (the error message says "expirationInMinutes ...
+# exceeded max allowed of 60"), so 60 is the effective maximum regardless of
+# what you set here. Override with MICROVM_TOKEN_TTL_MINUTES if AWS raises
+# this limit in the future.
+_MICROVM_TOKEN_TTL_MINUTES = int(os.getenv("MICROVM_TOKEN_TTL_MINUTES", "60"))
 _MICROVM_STARTUP_TIMEOUT_SECONDS = 180
 _MICROVM_STARTUP_POLL_INTERVAL_SECONDS = 2
 
@@ -157,9 +167,69 @@ def ensure_run_hook_enabled(image_arn: str | None = None) -> dict:
     existing_hooks["port"] = 9000
     update_args["hooks"] = existing_hooks
 
+    # Set the memory cap on the image so every MicroVM launched from it
+    # is bounded. AWS treats minimumMemoryInMiB as the effective allocation.
+    update_args["resources"] = [{"minimumMemoryInMiB": config.MICROVM_MEMORY_MIB}]
+
+    # If the image already has the run hook enabled, the HTTP hook port
+    # exposed, and the memory cap already applied, skip the update entirely.
+    # AWS rejects in-place updates on an already-active/published image
+    # ("Cannot update MicroVM Image in its current state"), so re-applying a
+    # no-op change would fail even though the configuration is already correct.
+    existing_resources = version_details.get("resources") or []
+    existing_mem = next(
+        (
+            r.get("minimumMemoryInMiB")
+            for r in existing_resources
+            if isinstance(r, dict) and r.get("minimumMemoryInMiB") is not None
+        ),
+        None,
+    )
+    already_configured = (
+        str(microvm_hooks.get("run", "")).upper() == "ENABLED"
+        and int(existing_hooks.get("port", 0)) == 9000
+        and existing_mem == config.MICROVM_MEMORY_MIB
+    )
+    if already_configured:
+        logger.info(
+            "Run hook already enabled and resource limits already applied for "
+            "image %s (version %s) — skipping update",
+            arn,
+            latest_version,
+        )
+        return {
+            "image_arn": arn,
+            "previous_version": latest_version,
+            "new_version": latest_version,
+            "status": "already_configured",
+            "response": version_details,
+        }
+
     try:
         resp = client.update_microvm_image(**update_args)
     except ClientError as exc:
+        error = exc.response.get("Error", {}) if hasattr(exc, "response") else {}
+        message = (error.get("Message") or str(exc)).lower()
+        # An image that is already published/active cannot be updated in place
+        # and must instead be versioned. If the configuration is effectively
+        # already in place, treat the rejection as a benign skip rather than a
+        # hard failure so startup and the admin endpoint do not error out.
+        if error.get("Code") == "ValidationException" and (
+            "current state" in message or "run hook" in message
+        ):
+            logger.warning(
+                "MicroVM image %s cannot be updated in its current state; "
+                "assuming it is already configured correctly: %s",
+                arn,
+                exc,
+            )
+            return {
+                "image_arn": arn,
+                "previous_version": latest_version,
+                "new_version": latest_version,
+                "status": "skipped_immutable_image",
+                "reason": str(exc),
+            }
         logger.exception(
             "Failed to update MicroVM image %s with run hook", arn
         )
@@ -231,12 +301,22 @@ def _create_token(microvm_id: str) -> dict:
         config.AWS_DEFAULT_REGION,
         config.AWS_ACCESS_KEY_ID[:8] if config.AWS_ACCESS_KEY_ID else "",
     )
+    if _MICROVM_TOKEN_TTL_MINUTES > 60:
+        logger.warning(
+            "MICROVM_TOKEN_TTL_MINUTES=%d > 60. AWS caps expirationInMinutes "
+            "at 60; clamping to 60. Set the env var to a lower value to "
+            "silence this warning.",
+            _MICROVM_TOKEN_TTL_MINUTES,
+        )
+
+    actual_ttl = min(_MICROVM_TOKEN_TTL_MINUTES, 60)
+
     resp = client.create_microvm_auth_token(
         microvmIdentifier=microvm_id,
-        expirationInMinutes=60,
-        allowedPorts=[{"allPorts": {}}],
+        expirationInMinutes=actual_ttl,
+        allowedPorts=[{"port": TARGET_PORT}, {"port": HOOK_SERVER_PORT}],
     )
-    logger.info("create_microvm_auth_token response: %s", resp)
+    logger.debug("create_microvm_auth_token response keys: %s", list(resp.keys()))
     token = _extract_auth_token(resp)
     if token:
         logger.info(
@@ -258,7 +338,7 @@ def _create_token(microvm_id: str) -> dict:
         )
 
     expires_at = datetime.now(timezone.utc) + timedelta(
-        minutes=60 - _TOKEN_LEAD_TIME_MINUTES
+        minutes=actual_ttl - _TOKEN_LEAD_TIME_MINUTES
     )
     return {
         "auth_token": token,
@@ -317,6 +397,34 @@ def _wait_for_running(microvm_id: str) -> None:
     )
 
 
+def ensure_resource_limits(image_arn: str | None = None) -> dict:
+    """Update the MicroVM image to enforce memory and duration caps.
+
+    Sets resources[].minimumMemoryInMiB on the latest active image version.
+    Safe to call at startup — it is idempotent if the values haven't changed.
+    Returns a summary dict; logs and returns an error dict on failure rather
+    than raising, so a misconfigured image does not block server startup.
+    """
+    arn = image_arn or config.MICROVM_IMAGE_ARN
+    if not arn:
+        logger.warning("ensure_resource_limits: MICROVM_IMAGE_ARN not set — skipping")
+        return {"skipped": True, "reason": "MICROVM_IMAGE_ARN not configured"}
+    try:
+        result = ensure_run_hook_enabled(arn)
+        logger.info(
+            "Resource limits applied to image %s: memory=%dMiB max_duration=%ds",
+            arn,
+            config.MICROVM_MEMORY_MIB,
+            config.MICROVM_MAX_DURATION_SECONDS,
+        )
+        return result
+    except Exception as exc:
+        logger.warning(
+            "ensure_resource_limits failed for image %s: %s", arn, exc
+        )
+        return {"skipped": True, "reason": str(exc)}
+
+
 def _try_enable_run_hook(image_arn: str) -> bool:
     """Attempt to enable the run hook on the image without raising.
 
@@ -339,6 +447,8 @@ def start_microvm(
     candidate_email: str,
     problem_markdown: str,
     candidate_jwt: str,
+    required_services: list[str] | None = None,
+    allow_assistant: bool = True,
 ) -> dict:
     """Launch a new MicroVM for an interview and return connection details."""
     if not config.MICROVM_IMAGE_ARN:
@@ -354,6 +464,10 @@ def start_microvm(
             "candidate_email": candidate_email,
             "problem_markdown": problem_markdown,
             "candidate_jwt": candidate_jwt,
+            "required_services": required_services or [],
+            "allow_assistant": allow_assistant,
+            "s3_candidate_logs_bucket": config.S3_CANDIDATE_LOGS_BUCKET,
+            "s3_candidate_logs_prefix": config.S3_CANDIDATE_LOGS_PREFIX,
         }
     )
 
@@ -371,6 +485,7 @@ def start_microvm(
         run_resp = client.run_microvm(
             imageIdentifier=config.MICROVM_IMAGE_ARN,
             runHookPayload=payload,
+            maximumDurationInSeconds=config.MICROVM_MAX_DURATION_SECONDS,
             idlePolicy={
                 "autoResumeEnabled": True,
                 "maxIdleDurationSeconds": 3600,
@@ -396,6 +511,7 @@ def start_microvm(
                     run_resp = client.run_microvm(
                         imageIdentifier=config.MICROVM_IMAGE_ARN,
                         runHookPayload=payload,
+                        maximumDurationInSeconds=config.MICROVM_MAX_DURATION_SECONDS,
                         idlePolicy={
                             "autoResumeEnabled": True,
                             "maxIdleDurationSeconds": 3600,
@@ -413,23 +529,17 @@ def start_microvm(
                         detail=f"Failed to start IDE environment: {error_msg}",
                     ) from retry_exc
             else:
-                logger.warning(
+                logger.error(
                     "Could not enable run hook automatically for image %s; "
-                    "retrying without runHookPayload. The IDE will fall back "
-                    "to a generated interview ID.",
+                    "interview %s cannot proceed without a run hook payload.",
                     config.MICROVM_IMAGE_ARN,
+                    interview_id,
                 )
-                try:
-                    run_resp = client.run_microvm(
-                        imageIdentifier=config.MICROVM_IMAGE_ARN,
-                    )
-                except ClientError as retry_exc:
-                    logger.exception("run_microvm retry failed for interview %s", interview_id)
-                    error_msg = retry_exc.response.get("Error", {}).get("Message", str(retry_exc))
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail=f"Failed to start IDE environment: {error_msg}",
-                    ) from retry_exc
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Could not enable the IDE run hook. The interview "
+                    "environment cannot be started without it. Contact support.",
+                )
         else:
             logger.exception("run_microvm failed for interview %s", interview_id)
             error_msg = exc.response.get("Error", {}).get("Message", str(exc))

@@ -1,9 +1,11 @@
+from uuid import uuid4
+
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,10 +19,13 @@ from ..lib.artifact_uploader import collect_and_upload_artifacts
 from ..lib.dt import to_utc
 from ..lib.email import send_interview_scheduled_email_task
 from ..lib.s3_recording import (
+    delete_interview_artifacts,
+    get_object_presigned_url,
     get_raw_log_json,
     get_recording_download_url,
     recording_s3_key,
     recording_s3_uri,
+    upload_proctoring_snapshot,
     upload_recording,
 )
 from ..lib.session_import import import_session_logs
@@ -32,6 +37,7 @@ from ..repositories.session_repository import session_repository
 from ..repositories.user_repository import user_repository
 from ..routers.scoring import run_scoring_background
 from ..schemas.interviews import InterviewCreate, InterviewRow, InterviewUpdate
+from ..schemas.proctoring import ProctoringAlertRow
 
 router = APIRouter(prefix="/interviews", tags=["interviews"])
 logger = logging.getLogger(__name__)
@@ -239,6 +245,11 @@ async def delete_interview(
             detail="Failed to delete interview",
         )
 
+    # Cascade-delete S3 artifacts so candidate PII/video does not accumulate.
+    # Run in a thread to avoid blocking the event loop; failures are logged
+    # inside delete_interview_artifacts and do not affect the HTTP response.
+    await asyncio.to_thread(delete_interview_artifacts, interview_id)
+
 
 @router.post("/{interview_id}/start")
 async def start_interview(
@@ -296,6 +307,8 @@ async def start_interview(
         interview.candidate.email,
         interview.problem.markdown_content,
         candidate_jwt,
+        interview.problem.required_services or [],
+        interview.problem.allow_assistant,
     )
     logger.info(
         "Started MicroVM for interview %s: candidate_email=%s problem_title=%s "
@@ -340,34 +353,29 @@ async def terminate_interview(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    logger.info("[END_SESSION] End Session requested for interview %s by %s", interview_id, current_user.role)
     interview = await interview_repository.get_with_session(db, interview_id)
     if interview is None:
+        logger.error("[END_SESSION] Interview %s not found", interview_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found"
         )
 
     if current_user.role not in {"admin", "candidate"}:
+        logger.error("[END_SESSION] User %s role %s not allowed to terminate interview %s", current_user.id, current_user.role, interview_id)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
         )
     if current_user.role == "candidate" and interview.candidate_id != current_user.id:
+        logger.error("[END_SESSION] Candidate %s not owner of interview %s", current_user.id, interview_id)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
         )
 
-    # Collect and upload the candidate's workspace archive and Coding Assistant
-    # log to S3 before the MicroVM is terminated. Termination destroys the
-    # MicroVM filesystem, so this must complete first. Failures are logged but
-    # do not block termination, otherwise an unresponsive MicroVM could leak.
-    artifact_result = None
-    if interview.microvm_endpoint:
-        artifact_result = await collect_and_upload_artifacts(interview)
-
-    if interview.microvm_id:
-        await asyncio.to_thread(
-            microvm_manager.terminate_microvm, interview.microvm_id
-        )
-
+    # Mark the interview completed immediately. The candidate explicitly ended
+    # the session, so the admin portal must reflect that regardless of whether
+    # artifact collection or MicroVM termination succeeds.
+    logger.info("[END_SESSION] Updating interview %s status to completed", interview_id)
     await interview_repository.update(
         db,
         interview,
@@ -376,21 +384,90 @@ async def terminate_interview(
             "ended_at": datetime.now(timezone.utc),
         },
     )
+    logger.info("[END_SESSION] Interview %s marked as COMPLETED", interview_id)
+
+    # Collect and upload the candidate's workspace archive and Coding Assistant
+    # log to S3 before the MicroVM is terminated. Termination destroys the
+    # MicroVM filesystem, so this must complete first. Failures are logged but
+    # do not block the completed status.
+    artifact_result = None
+    if interview.microvm_endpoint:
+        logger.info(
+            "[END_SESSION] Collecting artifacts for interview %s (endpoint=%s microvm_id=%s)",
+            interview_id,
+            interview.microvm_endpoint,
+            interview.microvm_id,
+        )
+        try:
+            artifact_result = await collect_and_upload_artifacts(interview)
+            if artifact_result:
+                logger.info(
+                    "[END_SESSION] Artifacts collected for interview %s: prefix=%s log_key=%s",
+                    interview_id,
+                    artifact_result.get("prefix"),
+                    artifact_result.get("log_key"),
+                )
+            else:
+                logger.error(
+                    "[END_SESSION] Artifact collection returned None for interview %s",
+                    interview_id,
+                )
+        except Exception:
+            logger.exception(
+                "[END_SESSION] Artifact collection failed during termination of interview %s",
+                interview_id,
+            )
+    else:
+        logger.warning(
+            "[END_SESSION] No MicroVM endpoint for interview %s; skipping artifact collection",
+            interview_id,
+        )
+
+    if interview.microvm_id:
+        logger.info("[END_SESSION] VM cleanup started for interview %s (MicroVM %s)", interview_id, interview.microvm_id)
+        try:
+            await asyncio.to_thread(
+                microvm_manager.terminate_microvm, interview.microvm_id
+            )
+            logger.info("[END_SESSION] MicroVM %s terminated for interview %s", interview.microvm_id, interview_id)
+        except Exception:
+            logger.exception(
+                "[END_SESSION] MicroVM termination failed during termination of interview %s",
+                interview_id,
+            )
+    else:
+        logger.warning("[END_SESSION] No MicroVM ID for interview %s; skipping VM cleanup", interview_id)
 
     # Import the candidate's workspace session log into the DB so scoring has
     # data to evaluate. Do this in a background task because it only touches
     # the filesystem and the DB.
     async def _import_and_score():
-        async with AsyncSessionLocal() as score_db:
-            await import_session_logs(
-                score_db,
+        logger.info("[END_SESSION] Background import-and-score started for interview %s", interview_id)
+        try:
+            async with AsyncSessionLocal() as score_db:
+                logger.info(
+                    "[END_SESSION] Importing session logs for interview %s (codebase_path=%s logs_path=%s)",
+                    interview_id,
+                    artifact_result.get("prefix") if artifact_result else None,
+                    artifact_result.get("log_key") if artifact_result else None,
+                )
+                await import_session_logs(
+                    score_db,
+                    interview_id,
+                    codebase_path=artifact_result["prefix"] if artifact_result else None,
+                    logs_path=artifact_result.get("log_key") if artifact_result else None,
+                )
+                logger.info("[END_SESSION] Session logs imported for interview %s", interview_id)
+                await run_scoring_background(interview_id)
+                logger.info("[END_SESSION] Scoring background triggered for interview %s", interview_id)
+        except Exception:
+            logger.exception(
+                "[END_SESSION] Background import-and-score failed for interview %s",
                 interview_id,
-                codebase_path=artifact_result["prefix"] if artifact_result else None,
-                logs_path=artifact_result.get("log_key") if artifact_result else None,
             )
-            await run_scoring_background(interview_id)
 
     background_tasks.add_task(_import_and_score)
+    logger.info("[END_SESSION] Finalization response returning for interview %s", interview_id)
     return {"message": "completed"}
 
 
@@ -500,18 +577,22 @@ async def get_interview_raw_log(
     current_user: User = Depends(require_role("admin", "interviewer")),
 ):
     """Return the raw candidate session log JSON as stored in S3."""
+    logger.info("[END_SESSION] raw-log requested for interview %s", interview_id)
     session = await session_repository.get_or_fetch_from_s3(db, interview_id)
     log_key = session.logs_path if session else None
+    logger.info("[END_SESSION] raw-log for interview %s using log_key=%s", interview_id, log_key)
 
     raw_logs = await asyncio.to_thread(
         get_raw_log_json, interview_id, log_key
     )
     if raw_logs is None:
+        logger.error("[END_SESSION] raw-log not found in S3 for interview %s", interview_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Raw log JSON not found in S3",
         )
 
+    logger.info("[END_SESSION] raw-log returned for interview %s", interview_id)
     return raw_logs
 
 
@@ -620,3 +701,115 @@ async def get_interview_recording(
         )
 
     return {"url": download_url}
+
+
+_VALID_PROCTORING_TYPES = {
+    "multiple_faces",
+    "head_movement",
+    "looking_away",
+    "no_face",
+    "phone_detected",
+}
+
+
+@router.post("/{interview_id}/proctoring/snapshots")
+async def upload_proctoring_snapshot_endpoint(
+    interview_id: str,
+    alert_type: str = Form(...),
+    captured_at: str = Form(...),
+    session_elapsed_ms: int = Form(...),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    interview = await interview_repository.get(db, interview_id)
+    if interview is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found"
+        )
+
+    if current_user.role not in {"admin", "candidate"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
+        )
+    if current_user.role == "candidate" and interview.candidate_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
+        )
+    if interview.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Proctoring snapshots can only be uploaded during active interviews",
+        )
+    if alert_type not in _VALID_PROCTORING_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid alert_type. Must be one of: {sorted(_VALID_PROCTORING_TYPES)}",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Snapshot file is empty",
+        )
+
+    alert_id = str(uuid4())
+    try:
+        s3_uri = await asyncio.to_thread(
+            upload_proctoring_snapshot, interview_id, alert_id, content
+        )
+    except Exception:
+        logger.exception(
+            "Failed to upload proctoring snapshot for interview %s", interview_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to upload proctoring snapshot to S3",
+        )
+
+    alert = {
+        "id": alert_id,
+        "alert_type": alert_type,
+        "captured_at": captured_at,
+        "session_elapsed_ms": session_elapsed_ms,
+        "image_s3_uri": s3_uri,
+    }
+    await session_repository.add_proctoring_alert(db, interview_id, alert)
+    return {"message": "proctoring snapshot uploaded", "id": alert_id}
+
+
+@router.get("/{interview_id}/proctoring/alerts")
+async def list_proctoring_alerts(
+    interview_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "interviewer")),
+) -> list[ProctoringAlertRow]:
+    interview = await interview_repository.get(db, interview_id)
+    if interview is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found"
+        )
+
+    session = await session_repository.get_by_interview(db, interview_id)
+    if session is None or not session.proctoring_alerts:
+        return []
+
+    rows: list[ProctoringAlertRow] = []
+    for alert in session.proctoring_alerts:
+        image_uri = alert.get("image_s3_uri")
+        image_url = None
+        if image_uri:
+            image_url = await asyncio.to_thread(get_object_presigned_url, image_uri)
+        rows.append(
+            ProctoringAlertRow(
+                id=alert["id"],
+                alert_type=alert["alert_type"],
+                captured_at=alert["captured_at"],
+                session_elapsed_ms=alert["session_elapsed_ms"],
+                image_url=image_url,
+            )
+        )
+
+    rows.sort(key=lambda row: row.session_elapsed_ms)
+    return rows

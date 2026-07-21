@@ -83,7 +83,7 @@ async def create_metric(
             ),
         )
 
-    metric_type = body.metric_type if body.metric_type in ("turn_based", "output") else "turn_based"
+    metric_type = body.metric_type if body.metric_type in ("interaction", "output") else "interaction"
     metric = Metric(
         id=str(uuid4()),
         key=key,

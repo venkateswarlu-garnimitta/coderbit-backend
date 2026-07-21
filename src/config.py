@@ -13,9 +13,23 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
+
+_MIN_JWT_SECRET_LENGTH = 32
+
+
+def _validate_jwt_secret() -> None:
+    """Fail fast if JWT_SECRET is missing or too short to be secure."""
+    if not JWT_SECRET or len(JWT_SECRET) < _MIN_JWT_SECRET_LENGTH:
+        raise RuntimeError(
+            f"JWT_SECRET must be set and at least {_MIN_JWT_SECRET_LENGTH} characters long. "
+            "Set a strong random value in backend/.env before starting the server."
+        )
+
+
+_validate_jwt_secret()
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "sqlite+aiosqlite:///data/interview.db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/interview_db",
 )
 
 CODEVECTOR_BASE_URL = os.getenv(
@@ -39,17 +53,10 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN", "")
 
-# Push AWS credentials into os.environ so boto3's default credential chain picks
-# them up when they are provided via the backend .env file. We assign directly
-# (not setdefault) so values in backend/.env override any stale system env vars.
-if AWS_DEFAULT_REGION:
-    os.environ["AWS_DEFAULT_REGION"] = AWS_DEFAULT_REGION
-if AWS_ACCESS_KEY_ID:
-    os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
-if AWS_SECRET_ACCESS_KEY:
-    os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
-if AWS_SESSION_TOKEN:
-    os.environ["AWS_SESSION_TOKEN"] = AWS_SESSION_TOKEN
+# NOTE: AWS credentials are intentionally NOT pushed into os.environ.
+# microvm_manager._get_client() reads them from this config module and passes
+# them explicitly via boto3.Session(...) kwargs, so they are never exposed
+# to subprocesses or environment-sniffing libraries.
 
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -78,6 +85,29 @@ WORKSPACE_VOLUME_TARGET = os.getenv(
 # is removed. Defaults to <repo>/code_bases. Override with CODEBASE_DIR env var.
 CODEBASE_DIR = Path(os.getenv("CODEBASE_DIR", str(_REPO_ROOT / "code_bases")))
 
+# IAM Role ARN that the backend assumes via STS to generate short-lived
+# upload credentials for MicroVMs. The role must allow s3:PutObject/GetObject
+# on the S3_CANDIDATE_LOGS_BUCKET. Required when MICROVM_IMAGE_ARN is set.
+MICROVM_UPLOAD_ROLE_ARN = os.getenv("MICROVM_UPLOAD_ROLE_ARN", "")
+
+# ── MicroVM resource limits ──────────────────────────────────────────────────
+# Memory cap set on the image via UpdateMicrovmImage resources[].minimumMemoryInMiB.
+# AWS uses this as both the minimum and effective allocation for Firecracker VMs.
+MICROVM_MEMORY_MIB = int(os.getenv("MICROVM_MEMORY_MIB", "2048"))
+
+# Hard wall-clock cap passed to run_microvm as maximumDurationInSeconds.
+# AWS terminates the MicroVM after this many seconds regardless of activity.
+# Default: 4 hours (14400s). Set to the longest interview duration + buffer.
+MICROVM_MAX_DURATION_SECONDS = int(os.getenv("MICROVM_MAX_DURATION_SECONDS", "14400"))
+
+# Disk write quota enforced inside the MicroVM via a sparse sentinel file
+# created by entrypoint.sh. Unit: MiB. Default: 2048 MiB (2 GB).
+MICROVM_DISK_QUOTA_MB = int(os.getenv("MICROVM_DISK_QUOTA_MB", "2048"))
+
+# Maximum number of processes/threads the candidate user may create inside
+# the MicroVM, enforced via cgroup pids.max. Default: 256.
+MICROVM_MAX_PIDS = int(os.getenv("MICROVM_MAX_PIDS", "256"))
+
 # S3 location where candidate workspace archives and Coding Assistant logs are
 # uploaded before an interview session is terminated.
 S3_CANDIDATE_LOGS_BUCKET = os.getenv("S3_CANDIDATE_LOGS_BUCKET", "coderbit")
@@ -88,3 +118,11 @@ RECORDINGS_DIR = Path(os.getenv("RECORDINGS_DIR", str(_REPO_ROOT / "recordings")
 # ── LLM Gateway ──
 GATEWAY_RATE_LIMIT_RPM = int(os.getenv("GATEWAY_RATE_LIMIT_RPM", "60"))
 GATEWAY_JWT_ISSUER = os.getenv("GATEWAY_JWT_ISSUER", "")
+
+# ── Scoring LLM ──────────────────────────────────────────────────────────────
+# Credentials for the LLM used by the multi-judge scoring pipeline.
+# Defaults fall back to the CodeVector config so existing deployments keep
+# working without any env change.
+SCORING_BASE_URL = os.getenv("SCORING_BASE_URL", CODEVECTOR_BASE_URL)
+SCORING_API_KEY = os.getenv("SCORING_API_KEY", CODEVECTOR_API_KEY)
+SCORING_MODEL = os.getenv("SCORING_MODEL", CODEVECTOR_MODEL)

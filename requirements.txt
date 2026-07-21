@@ -11,9 +11,11 @@ httpx
 websockets
 boto3
 sqlalchemy[asyncio]
-aiosqlite
+asyncpg
+psycopg2-binary
 alembic
 tzdata
 python-multipart
 strands-agents
 openai
+cryptography

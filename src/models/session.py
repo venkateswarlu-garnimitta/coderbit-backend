@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -22,6 +22,9 @@ class InterviewSession(Base):
     codebase_path: Mapped[str | None] = mapped_column(String, nullable=True)
     recording_path: Mapped[str | None] = mapped_column(String, nullable=True)
     logs_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    proctoring_alerts: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,7 @@ from .database import AsyncSessionLocal
 from .models.user import User
 from .repositories.user_repository import user_repository
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -25,14 +25,21 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    bearer_token: str | None = Depends(oauth2_scheme),
+    auth_cookie: str | None = Cookie(default=None, alias="auth_token"),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    # Prefer the HttpOnly cookie; fall back to Bearer header for API clients
+    # and the IDE proxy (which still uses Authorization: Bearer internally).
+    token = auth_cookie or bearer_token
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, config.JWT_SECRET, algorithms=["HS256"])
         user_id: str | None = payload.get("sub")

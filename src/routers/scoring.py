@@ -139,26 +139,37 @@ def _parse_judge_output(interview_id, judge_result, metrics) -> dict:
 
 async def _score_interview(interview_id: str) -> tuple | None:
     """Run LLM scoring asynchronously and store the result."""
+    logger.info("[END_SESSION] Starting LLM scoring for interview %s", interview_id)
     async with AsyncSessionLocal() as db:
         interview = await interview_repository.get(db, interview_id)
         if interview is None:
+            logger.error("[END_SESSION] Cannot score: interview %s not found", interview_id)
             return None
 
         if interview.status != "completed":
+            logger.warning(
+                "[END_SESSION] Skipping scoring for interview %s: status is %s (not completed)",
+                interview_id,
+                interview.status,
+            )
             return None
 
         session = await session_repository.get_or_fetch_from_s3(db, interview_id)
         log_key = session.logs_path if session else None
+        logger.info("[END_SESSION] Scoring interview %s using log_key=%s", interview_id, log_key)
 
         logs = await session_repository.get_S3_logs(interview_id, log_key)
         if not logs:
+            logger.error("[END_SESSION] No session logs found for interview %s", interview_id)
             raise NoSessionLogsError()
+        logger.info("[END_SESSION] Loaded %s log events for interview %s", len(logs), interview_id)
         logs = [ e for e in logs if (e["type"] == "prompt" or e["type"] == "llm_response")]
         
         files_path = await session_repository.get_files_path(interview_id)
         
         problem = await problem_repository.get(db, interview.problem_id)
         if problem is None:
+            logger.error("[END_SESSION] Cannot score: problem not found for interview %s", interview_id)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Problem not found for this interview",
@@ -170,9 +181,10 @@ async def _score_interview(interview_id: str) -> tuple | None:
             problem_statement = problem.markdown_content
             metrics_output = await _resolve_scoring_metrics_by_type(db, problem, "output")
             metrics_interact = await _resolve_scoring_metrics_by_type(db, problem, "interaction")
+            logger.info("[END_SESSION] Calling LLM judge for interview %s", interview_id)
             judge_result = await asyncio.to_thread(llm_judge.multi_judge_session, logs, problem_statement, files_path, metrics_output, metrics_interact)
         except HTTPException as exc:
-            logger.error("LLM scoring failed for interview %s: %s", interview_id, exc.detail)
+            logger.error("[END_SESSION] LLM scoring failed for interview %s: %s", interview_id, exc.detail)
             await interview_repository.update_scoring_status(db, interview_id, "failed")
             raise
         
@@ -212,6 +224,7 @@ async def _score_interview(interview_id: str) -> tuple | None:
         final_score_obj = await _upsert_score(final_score)
 
         await interview_repository.update_scoring_status(db, interview_id, "scored")
+        logger.info("[END_SESSION] LLM scoring completed for interview %s", interview_id)
 
         return (
             _format_score(output_score_obj).model_dump(),
@@ -222,7 +235,22 @@ async def _score_interview(interview_id: str) -> tuple | None:
 
 async def run_scoring_background(interview_id: str) -> None:
     """Trigger LLM scoring in a background asyncio task."""
-    asyncio.create_task(_score_interview(interview_id))
+    logger.info("[END_SESSION] Queuing background scoring for interview %s", interview_id)
+    async def _run():
+        logger.info("[END_SESSION] Background scoring started for interview %s", interview_id)
+        try:
+            await _score_interview(interview_id)
+            logger.info("[END_SESSION] Background scoring finished for interview %s", interview_id)
+        except NoSessionLogsError:
+            logger.info(
+                "[END_SESSION] Background scoring skipped for interview %s: no session logs",
+                interview_id,
+            )
+        except Exception:
+            logger.exception(
+                "[END_SESSION] Background scoring failed for interview %s", interview_id
+            )
+    asyncio.create_task(_run())
 
 
 @router.post("/{interview_id}/score", response_model=list[ScoreOut])

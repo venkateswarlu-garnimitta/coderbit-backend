@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -23,6 +23,12 @@ class Problem(Base):
     acceptance_criteria: Mapped[str | None] = mapped_column(Text, nullable=True)
     metric_ids: Mapped[list] = mapped_column(
         JSON, nullable=False, default=list
+    )
+    required_services: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    allow_assistant: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

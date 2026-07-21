@@ -7,7 +7,9 @@ path so backend analysis functions can read the contents.
 
 from __future__ import annotations
 
+import atexit
 import logging
+import shutil
 import zipfile
 from pathlib import Path
 from tempfile import mkdtemp
@@ -18,6 +20,17 @@ from .. import config
 from .s3_recording import _get_s3_client
 
 logger = logging.getLogger(__name__)
+
+# Track all temp dirs created in this process so they are cleaned up on exit.
+_TEMP_DIRS: list[str] = []
+
+
+def _cleanup_temp_dirs() -> None:
+    for d in _TEMP_DIRS:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+atexit.register(_cleanup_temp_dirs)
 
 
 def _find_zip_key(client, interview_id: str) -> str | None:
@@ -83,6 +96,7 @@ def extract_workspace_from_s3(
         ) from exc
 
     extract_dir = Path(mkdtemp(prefix=f"workspace_{interview_id}_"))
+    _TEMP_DIRS.append(str(extract_dir))
     logger.info(
         "Extracting workspace ZIP for interview %s to %s",
         interview_id,

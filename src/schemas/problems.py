@@ -2,6 +2,10 @@ from pydantic import BaseModel, Field
 
 from .metrics import CustomMetricCreate, MetricOut
 
+# Allowed service identifiers. Validated in the router so the DB never stores
+# arbitrary strings that entrypoint.sh would try to start.
+ALLOWED_SERVICES = frozenset({"postgres", "redis", "mongodb"})
+
 
 class ProblemCreate(BaseModel):
     title: str = Field(..., min_length=1)
@@ -11,6 +15,8 @@ class ProblemCreate(BaseModel):
     acceptance_criteria: str | None = None
     metric_ids: list[str] = Field(default_factory=list)
     custom_metrics: list[CustomMetricCreate] = Field(default_factory=list)
+    required_services: list[str] = Field(default_factory=list)
+    allow_assistant: bool = True
 
 
 class ProblemUpdate(BaseModel):
@@ -21,6 +27,8 @@ class ProblemUpdate(BaseModel):
     acceptance_criteria: str | None = None
     metric_ids: list[str] | None = None
     custom_metrics: list[CustomMetricCreate] | None = None
+    required_services: list[str] | None = None
+    allow_assistant: bool | None = None
 
 
 class ProblemSummary(BaseModel):
@@ -31,6 +39,8 @@ class ProblemSummary(BaseModel):
     markdown_content: str
     acceptance_criteria: str | None = None
     metric_ids: list[str]
+    required_services: list[str] = Field(default_factory=list)
+    allow_assistant: bool = True
     created_at: str
 
 
@@ -43,4 +53,6 @@ class ProblemDetail(BaseModel):
     acceptance_criteria: str | None = None
     metric_ids: list[str]
     metrics: list[MetricOut]
+    required_services: list[str] = Field(default_factory=list)
+    allow_assistant: bool = True
     created_at: str

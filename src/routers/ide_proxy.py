@@ -9,7 +9,9 @@ WebSocket subprotocol handshake when proxying WebSocket traffic.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -20,12 +22,14 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     WebSocket,
-    WebSocketDisconnect,
     status,
 )
+from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
+from starlette.websockets import WebSocketDisconnect
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +43,30 @@ from ..repositories.interview_repository import interview_repository
 router = APIRouter(tags=["ide"])
 
 logger = logging.getLogger(__name__)
+
+# Allowed Origins for WebSocket upgrades. Populated from FRONTEND_URL and
+# any additional values in WS_ALLOWED_ORIGINS (comma-separated).
+def _build_ws_origin_allowlist() -> frozenset[str]:
+    origins = set()
+    if config.FRONTEND_URL:
+        origins.add(config.FRONTEND_URL.rstrip("/"))
+    extra = os.getenv("WS_ALLOWED_ORIGINS", "")
+    for o in extra.split(","):
+        o = o.strip()
+        if o:
+            origins.add(o)
+    # Always allow localhost variants for local development.
+    # localhost:8080 is the code-server origin when proxied through the backend
+    # (seen in webview parentOrigin).
+    origins.update([
+        "http://localhost:5173",
+        "http://localhost:3001",
+        "http://localhost:8080",
+        "http://127.0.0.1:5173",
+    ])
+    return frozenset(origins)
+
+_WS_ALLOWED_ORIGINS = _build_ws_origin_allowlist()
 
 _HOP_BY_HOP_HEADERS = {
     "connection",
@@ -88,11 +116,14 @@ def _set_cookie_header(token: str, request: Request) -> str:
         "Path=/api/interviews/",
         "HttpOnly",
     ]
-    # In local dev the request may be http://; only mark Secure when we are
-    # actually on HTTPS so the browser does not drop the cookie.
+    # Only mark Secure + SameSite=None when on HTTPS. On HTTP (local dev)
+    # browsers reject SameSite=None without Secure, silently dropping the
+    # cookie and breaking WebSocket auth (1006). Lax is the default on HTTP
+    # and works fine for same-origin proxied loads.
     forwarded_proto = request.headers.get("x-forwarded-proto")
     if request.url.scheme == "https" or (forwarded_proto and forwarded_proto.lower() == "https"):
         parts.append("Secure")
+        parts.append("SameSite=None")
     return "; ".join(parts)
 
 
@@ -125,9 +156,13 @@ def _authorize_request(request: Request, token_query: str | None) -> dict:
     return current_user
 
 
-async def _authorize_interview(
+async def _authorize_and_load_interview(
     interview_id: str, current_user: dict, db: AsyncSession
-) -> None:
+) -> Interview:
+    """Authorize the user for the interview and load active MicroVM details.
+
+    Combines the authorization and load checks into a single DB read.
+    """
     interview = await interview_repository.get(db, interview_id)
     if interview is None:
         raise HTTPException(
@@ -136,16 +171,6 @@ async def _authorize_interview(
     if current_user["role"] == "candidate" and interview.candidate_id != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
-        )
-
-
-async def _load_active_interview(
-    interview_id: str, db: AsyncSession
-) -> Interview:
-    interview = await interview_repository.get(db, interview_id)
-    if interview is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found"
         )
     if interview.status == "scheduled":
         raise HTTPException(
@@ -198,6 +223,87 @@ def _build_upstream_url(endpoint: str, path: str, query_params: list[tuple[str, 
     return upstream
 
 
+def _parse_proxy_path(path: str) -> tuple[int | None, str]:
+    prefix = "proxy/"
+    if path.startswith(prefix):
+        after_prefix = path[len(prefix):]
+        slash = after_prefix.find("/")
+        port_str = after_prefix[:slash] if slash != -1 else after_prefix
+        if port_str.isdigit():
+            port = int(port_str)
+            rest = after_prefix[slash + 1:] if slash != -1 else ""
+            return port, rest
+    return None, path
+
+
+def _clean_response_headers(response_headers: httpx.Headers) -> dict[str, str]:
+    """Return upstream response headers suitable for forwarding to the client.
+
+    Used when the response body is read, modified, and re-encoded. Content-Length
+    and Content-Encoding are dropped so FastAPI can compute fresh values for the
+    rewritten body.
+    """
+    cleaned: dict[str, str] = {}
+    for name, value in response_headers.items():
+        lower = name.lower()
+        if lower in _HOP_BY_HOP_HEADERS or lower in _HEADERS_TO_STRIP:
+            continue
+        if lower in {"content-length", "content-encoding"}:
+            continue
+        cleaned[name] = value
+    return cleaned
+
+
+async def _rewrite_docs_response(
+    response: httpx.Response,
+    interview_id: str,
+    proxy_port: int,
+) -> Response:
+    """Rewrite FastAPI's /docs HTML so Swagger UI loads openapi.json through the proxy."""
+    try:
+        body = await response.aread()
+        text = body.decode("utf-8", errors="replace")
+        proxied_openapi_url = (
+            f"/api/interviews/{interview_id}/ide/proxy/{proxy_port}/openapi.json"
+        )
+        text = text.replace('"/openapi.json"', f'"{proxied_openapi_url}"')
+        text = text.replace("'/openapi.json'", f"'{proxied_openapi_url}'")
+        return Response(
+            content=text.encode("utf-8"),
+            status_code=response.status_code,
+            headers=_clean_response_headers(response.headers),
+            media_type=response.headers.get("content-type"),
+        )
+    finally:
+        await response.aclose()
+
+
+async def _rewrite_openapi_response(
+    response: httpx.Response,
+    interview_id: str,
+    proxy_port: int,
+) -> Response:
+    """Inject the proxy path into the OpenAPI servers field for Swagger UI."""
+    try:
+        body = await response.aread()
+        try:
+            spec = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            spec = {}
+        if not isinstance(spec, dict):
+            spec = {}
+        server_url = f"/api/interviews/{interview_id}/ide/proxy/{proxy_port}"
+        spec["servers"] = [{"url": server_url}]
+        return Response(
+            content=json.dumps(spec).encode("utf-8"),
+            status_code=response.status_code,
+            headers=_clean_response_headers(response.headers),
+            media_type=response.headers.get("content-type"),
+        )
+    finally:
+        await response.aclose()
+
+
 def _aws_ws_subprotocols(auth_token: str) -> list[str]:
     return [
         "lambda-microvms",
@@ -230,8 +336,7 @@ async def proxy_ide_http(
         current_user.get("role"),
         auth_source,
     )
-    await _authorize_interview(interview_id, current_user, db)
-    interview = await _load_active_interview(interview_id, db)
+    interview = await _authorize_and_load_interview(interview_id, current_user, db)
     interview = await _ensure_token_fresh(interview, db)
 
     query_params = [
@@ -239,6 +344,13 @@ async def proxy_ide_http(
         for k, v in request.query_params.multi_items()
         if k != "token"
     ]
+
+    # Parse proxy/{port}/ prefix for Swagger rewrite logic. The full path
+    # (including /proxy/{port}/) is forwarded as-is to code-server, which has a
+    # built-in proxy that handles routing to localhost:{port}. X-aws-proxy-port
+    # must stay 8080 — MicroVM only allows that port.
+    proxy_port, proxy_rest = _parse_proxy_path(path)
+
     upstream_url = _build_upstream_url(
         interview.microvm_endpoint, path, query_params
     )
@@ -250,6 +362,12 @@ async def proxy_ide_http(
         "X-aws-proxy-auth": interview.auth_token,
         "X-aws-proxy-port": str(microvm_manager.TARGET_PORT),
     }
+    # For proxy requests (paths starting with proxy/) forward cookies so that
+    # user apps with CSRF/auth cookies work through the proxy chain.
+    if path.startswith("proxy/"):
+        cookie = request.headers.get("cookie")
+        if cookie:
+            headers["Cookie"] = cookie
     # Preserve Content-Type for POST/PUT requests so the upstream can parse body.
     content_type = request.headers.get("content-type")
     if content_type:
@@ -268,7 +386,14 @@ async def proxy_ide_http(
         headers,
     )
 
-    body = await request.body()
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.warning(
+            "Client disconnected before body read for interview %s; skipping proxy",
+            interview_id,
+        )
+        raise HTTPException(status_code=499, detail="Client disconnected")
 
     client = httpx.AsyncClient(
         timeout=60.0,
@@ -382,15 +507,31 @@ async def proxy_ide_http(
             media_type=response.headers.get("content-type"),
         )
 
+    # Rewrite FastAPI Swagger docs responses so the openapi.json URL and the
+    # "Try it out" base URL point back through the proxy. All other responses
+    # are passed through unchanged.
+    if proxy_port is not None:
+        if proxy_rest.rstrip("/") == "docs":
+            try:
+                return await _rewrite_docs_response(response, interview_id, proxy_port)
+            finally:
+                await client.aclose()
+        if proxy_rest == "openapi.json":
+            try:
+                return await _rewrite_openapi_response(response, interview_id, proxy_port)
+            finally:
+                await client.aclose()
+
     async def _close():
         await response.aclose()
         await client.aclose()
 
+    response_content_type = response.headers.get("content-type", "")
     return StreamingResponse(
         response.aiter_raw(),
         status_code=response.status_code,
         headers=response_headers,
-        media_type=response.headers.get("content-type"),
+        media_type=response_content_type,
         background=BackgroundTask(_close),
     )
 
@@ -440,6 +581,19 @@ async def proxy_ide_ws(
         await websocket.close(code=1008)
         return
 
+    # Validate Origin header against the allowlist to prevent cross-site
+    # WebSocket hijacking of live terminal sessions. Missing/empty origin
+    # is also rejected so the check cannot be bypassed by omitting the header.
+    origin = websocket.headers.get("origin", "")
+    if not origin or origin not in _WS_ALLOWED_ORIGINS:
+        logger.warning(
+            "WebSocket upgrade rejected for interview %s: Origin %r not in allowlist",
+            interview_id,
+            origin,
+        )
+        await websocket.close(code=1008)
+        return
+
     try:
         current_user = _decode_token(effective_token)
     except HTTPException:
@@ -451,8 +605,7 @@ async def proxy_ide_ws(
         return
 
     try:
-        await _authorize_interview(interview_id, current_user, db)
-        interview = await _load_active_interview(interview_id, db)
+        interview = await _authorize_and_load_interview(interview_id, current_user, db)
     except HTTPException:
         await websocket.close(code=1008)
         return
@@ -490,12 +643,34 @@ async def proxy_ide_ws(
                 upstream_url,
                 subprotocols=subprotocols,
                 additional_headers=ws_headers,
+                # Keep the upstream (code-server) leg alive through any proxy
+                # idle timeout. code-server's underlying `ws` library auto-answers
+                # ping frames with pong, so this does not trigger premature closes.
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=10,
             ) as upstream:
                 reconnect_attempts = 0
-                await asyncio.gather(
-                    _client_to_server(websocket, upstream),
-                    _server_to_client(websocket, upstream),
+                client_task = asyncio.create_task(
+                    _client_to_server(websocket, upstream)
                 )
+                server_task = asyncio.create_task(
+                    _server_to_client(websocket, upstream)
+                )
+                done, pending = await asyncio.wait(
+                    {client_task, server_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # Always cancel the still-running sibling so we never leak a
+                # task (and a dangling websocket.receive) across reconnects.
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                for task in done:
+                    exc = task.exception()
+                    if exc is not None:
+                        raise exc
         except WebSocketDisconnect:
             break
         except websockets.exceptions.ConnectionClosed:

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ..lib.dt import to_utc
+from ..lib.token_encryption import decrypt_token, encrypt_token
 from ..models.interview import Interview
 from .base import BaseRepository
 
@@ -17,9 +21,45 @@ if TYPE_CHECKING:
     from ..models.user import User
 
 
+def _encrypt_auth_token(data: dict) -> dict:
+    """Return a copy of update_data with auth_token encrypted if present."""
+    if "auth_token" in data and data["auth_token"]:
+        data = {**data, "auth_token": encrypt_token(data["auth_token"])}
+    return data
+
+
+def _decrypt_interview(interview: Interview) -> Interview:
+    """Decrypt auth_token on a loaded Interview object in-place."""
+    if interview.auth_token:
+        try:
+            interview.auth_token = decrypt_token(interview.auth_token)
+        except ValueError:
+            logger.warning(
+                "auth_token for interview %s could not be decrypted "
+                "(falling back to plaintext — likely a row written before "
+                "encryption was enabled or the encryption key was rotated).",
+                interview.id,
+            )
+    return interview
+
+
 class InterviewRepository(BaseRepository[Interview]):
     def __init__(self):
         super().__init__(Interview)
+
+    async def get(
+        self, db: "AsyncSession", obj_id: str
+    ) -> Interview | None:
+        interview = await super().get(db, obj_id)
+        return _decrypt_interview(interview) if interview else None
+
+    async def update(
+        self, db: "AsyncSession", db_obj: Interview, update_data: dict
+    ) -> Interview:
+        """Encrypt auth_token before persisting, then decrypt after refresh."""
+        update_data = _encrypt_auth_token(update_data)
+        interview = await super().update(db, db_obj, update_data)
+        return _decrypt_interview(interview)
 
     async def get_by_candidate(
         self, db: "AsyncSession", candidate_id: str
@@ -54,7 +94,8 @@ class InterviewRepository(BaseRepository[Interview]):
                 selectinload(Interview.scores),
             )
         )
-        return result.scalar_one_or_none()
+        interview = result.scalar_one_or_none()
+        return _decrypt_interview(interview) if interview else None
 
     async def get_active(self, db: "AsyncSession") -> list[Interview]:
         result = await db.execute(
@@ -62,7 +103,7 @@ class InterviewRepository(BaseRepository[Interview]):
             .where(Interview.status == "active")
             .options(selectinload(Interview.candidate))
         )
-        return list(result.scalars().all())
+        return [_decrypt_interview(i) for i in result.scalars().all()]
 
     async def list_for_user(self, db: "AsyncSession", user: "User") -> list[Interview]:
         stmt = (

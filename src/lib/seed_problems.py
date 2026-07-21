@@ -152,6 +152,15 @@ async def seed_problems(db: AsyncSession) -> tuple[int, int, int]:
             if not existing.metric_ids and metric_ids:
                 updates["metric_ids"] = metric_ids
 
+            # Keep per-problem resources + assistant toggle in sync with the
+            # seed file on every run so operators can change them in one place.
+            required_services = project.get("required_services") or []
+            if existing.required_services != required_services:
+                updates["required_services"] = required_services
+            allow_assistant = bool(project.get("allow_assistant", True))
+            if existing.allow_assistant != allow_assistant:
+                updates["allow_assistant"] = allow_assistant
+
             if updates:
                 await problem_repository.update(db, existing, updates)
                 updated += 1
@@ -167,6 +176,8 @@ async def seed_problems(db: AsyncSession) -> tuple[int, int, int]:
             difficulty=difficulty,
             acceptance_criteria=acceptance_criteria,
             metric_ids=metric_ids,
+            required_services=project.get("required_services") or [],
+            allow_assistant=bool(project.get("allow_assistant", True)),
         )
         created += 1
 
